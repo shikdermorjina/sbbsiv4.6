@@ -3,9 +3,9 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { toast } from '@/hooks/use-toast';
-import { Settings, User, Bell, Shield, Palette, Building2, Save } from 'lucide-react';
+import { Settings, User, Bell, Shield, Palette, Building2, Save, Database, RefreshCw, Trash2 } from 'lucide-react';
 
-type SettingsTab = 'general' | 'profile' | 'notifications' | 'security' | 'appearance';
+type SettingsTab = 'general' | 'profile' | 'notifications' | 'security' | 'appearance' | 'data';
 
 interface CompanySettings {
   name: string;
@@ -192,6 +192,7 @@ export default function SettingsPage() {
     { id: 'notifications', label: 'Notifications', icon: Bell },
     { id: 'security', label: 'Security', icon: Shield },
     { id: 'appearance', label: 'Appearance', icon: Palette },
+    { id: 'data', label: 'Data', icon: Database },
   ];
 
   const roleLabels: Record<string, string> = {
@@ -517,6 +518,146 @@ export default function SettingsPage() {
                       readOnly
                       className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-muted/30 text-muted-foreground"
                     />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'data' && (
+            <div>
+              <div className="px-6 py-4 border-b border-border">
+                <h2 className="text-base font-bold">Data Management</h2>
+                <p className="text-xs text-muted-foreground mt-0.5">Manage seed data and reset options</p>
+              </div>
+              <div className="p-6 space-y-5">
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                  <p className="text-sm font-semibold text-amber-700">Warning</p>
+                  <p className="text-xs text-amber-600 mt-1">These actions are irreversible. Please backup your data before proceeding.</p>
+                </div>
+
+                <div className="border border-border rounded-xl p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Reset Seed Data</p>
+                      <p className="text-xs text-muted-foreground">Remove all sample/demo data and start fresh</p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!confirm('Are you sure you want to remove ALL seed data? This will delete sample products, customers, and transactions.')) return;
+                        setSaving(true);
+
+                        const tables = [
+                          'invoice_items', 'payments', 'invoices', 'quotations',
+                          'stock_movements', 'inventory_items', 'purchase_order_items', 'purchase_orders',
+                          'delivery_items', 'deliveries', 'products', 'customers', 'suppliers',
+                          'product_colors', 'product_sizes', 'product_units'
+                        ];
+
+                        for (const table of tables) {
+                          await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                        }
+
+                        toast({ title: 'Success', description: 'All seed data has been removed' });
+                        setSaving(false);
+                      }}
+                      disabled={saving}
+                      className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Clear All Data
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border border-border rounded-xl p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Reset Categories & Brands</p>
+                      <p className="text-xs text-muted-foreground">Remove all categories and brands</p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!confirm('Remove all categories and brands?')) return;
+                        setSaving(true);
+                        await supabase.from('products').update({ category_id: null, brand_id: null }).neq('id', '00000000-0000-0000-0000-000000000000');
+                        await supabase.from('categories').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                        await supabase.from('brands').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                        toast({ title: 'Success', description: 'Categories and brands cleared' });
+                        setSaving(false);
+                      }}
+                      disabled={saving}
+                      className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Reset
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border border-border rounded-xl p-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Re-seed Demo Data</p>
+                      <p className="text-xs text-muted-foreground">Add sample products, customers, and transactions</p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!confirm('This will add sample data. Continue?')) return;
+                        setSaving(true);
+
+                        const sampleCustomers = [
+                          { id: 'seed-cust-1', code: 'CUST-001', name: 'Abdul Rahman', type: 'retail', country: 'Bangladesh', is_active: true, credit_limit: 50000, credit_days: 30, outstanding_balance: 0, total_purchases: 0, loyalty_points: 100, discount_percent: 5 },
+                          { id: 'seed-cust-2', code: 'CUST-002', name: 'Karim Construction', type: 'contractor', country: 'Bangladesh', is_active: true, credit_limit: 200000, credit_days: 45, outstanding_balance: 0, total_purchases: 0, loyalty_points: 0, discount_percent: 10 },
+                          { id: 'seed-cust-3', code: 'CUST-003', name: 'Fatima Interiors', type: 'interior_designer', country: 'Bangladesh', is_active: true, credit_limit: 100000, credit_days: 30, outstanding_balance: 0, total_purchases: 0, loyalty_points: 50, discount_percent: 8 },
+                        ];
+                        await supabase.from('customers').upsert(sampleCustomers, { onConflict: 'id' });
+
+                        const sampleCategories = [
+                          { id: 'seed-cat-1', name: 'Cement & Concrete', slug: 'cement-concrete', is_active: true, sort_order: 1 },
+                          { id: 'seed-cat-2', name: 'Steel & Iron', slug: 'steel-iron', is_active: true, sort_order: 2 },
+                          { id: 'seed-cat-3', name: 'Paints & Finishes', slug: 'paints-finishes', is_active: true, sort_order: 3 },
+                          { id: 'seed-cat-4', name: 'Tiles & Flooring', slug: 'tiles-flooring', is_active: true, sort_order: 4 },
+                        ];
+                        await supabase.from('categories').upsert(sampleCategories, { onConflict: 'id' });
+
+                        const sampleBrands = [
+                          { id: 'seed-brand-1', name: 'Holcim', slug: 'holcim', is_active: true },
+                          { id: 'seed-brand-2', name: 'BSRM', slug: 'bsrm', is_active: true },
+                          { id: 'seed-brand-3', name: 'Asian Paints', slug: 'asian-paints', is_active: true },
+                          { id: 'seed-brand-4', name: 'Rak Ceramics', slug: 'rak-ceramics', is_active: true },
+                        ];
+                        await supabase.from('brands').upsert(sampleBrands, { onConflict: 'id' });
+
+                        const sampleProducts = [
+                          { id: 'seed-prod-1', sku: 'CEM-001', name: 'Holcim Portland Cement 50kg', category_id: 'seed-cat-1', brand_id: 'seed-brand-1', unit: 'bag', cost_price: 520, sale_price: 550, min_stock_level: 100, is_active: true, is_online: true, warranty_months: 0, tax_rate: 0 },
+                          { id: 'seed-prod-2', sku: 'STL-001', name: 'BSRM 500 Grade Rebar 12mm', category_id: 'seed-cat-2', brand_id: 'seed-brand-2', unit: 'ton', cost_price: 85000, sale_price: 88000, min_stock_level: 10, is_active: true, is_online: true, warranty_months: 0, tax_rate: 0 },
+                          { id: 'seed-prod-3', sku: 'PNT-001', name: 'Asian Paints Emulsion White 20L', category_id: 'seed-cat-3', brand_id: 'seed-brand-3', unit: 'tin', cost_price: 3200, sale_price: 3500, min_stock_level: 20, is_active: true, is_online: true, warranty_months: 12, tax_rate: 0 },
+                          { id: 'seed-prod-4', sku: 'TIL-001', name: 'RAK Floor Tiles 2x2 White', category_id: 'seed-cat-4', brand_id: 'seed-brand-4', unit: 'sqft', cost_price: 65, sale_price: 85, min_stock_level: 500, is_active: true, is_online: true, warranty_months: 0, tax_rate: 0 },
+                        ];
+                        await supabase.from('products').upsert(sampleProducts, { onConflict: 'id' });
+
+                        const defaultWarehouse = await supabase.from('warehouses').select('id').limit(1).single();
+                        if (defaultWarehouse.data) {
+                          const inventoryItems = sampleProducts.map(p => ({
+                            product_id: p.id,
+                            warehouse_id: defaultWarehouse.data.id,
+                            quantity_on_hand: p.min_stock_level * 2,
+                            quantity_reserved: 0,
+                            quantity_incoming: 0,
+                          }));
+                          await supabase.from('inventory_items').upsert(inventoryItems, { onConflict: 'product_id,warehouse_id' });
+                        }
+
+                        toast({ title: 'Success', description: 'Sample data has been added' });
+                        setSaving(false);
+                      }}
+                      disabled={saving}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60"
+                    >
+                      <Database className="w-4 h-4" />
+                      Add Sample Data
+                    </button>
                   </div>
                 </div>
               </div>

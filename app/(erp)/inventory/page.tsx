@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
 import JsBarcode from 'jsbarcode';
-import { Package, Plus, Search, CreditCard as Edit, Trash2, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Boxes, TrendingDown, RefreshCw, X, Warehouse, Palette, Ruler, ChevronDown, ChevronUp, Info, Settings, Barcode, Camera, Printer, Download, Upload } from 'lucide-react';
+import { Package, Plus, Search, CreditCard as Edit, Trash2, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Boxes, TrendingDown, RefreshCw, X, Warehouse, Palette, Ruler, ChevronDown, ChevronUp, ChevronRight, Info, Settings, Barcode, Camera, Printer, Download, Upload } from 'lucide-react';
 import type { Product, Category, Brand, Warehouse as WarehouseType, ProductColor, ProductSize, ProductUnit } from '@/lib/types';
 
 function StockByWarehouse({ productId, warehouses, inventoryByWarehouse }: { productId: string; warehouses: WarehouseType[]; inventoryByWarehouse: Record<string, Record<string, number>> }) {
@@ -306,7 +306,14 @@ export default function InventoryPage() {
         </div>
         <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
           <option value="">All Categories</option>
-          {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {categories.filter(c => !c.parent_id).map(c => (
+            <optgroup key={c.id} label={c.name}>
+              <option key={c.id} value={c.id}>{c.name}</option>
+              {categories.filter(sc => sc.parent_id === c.id).map(sc => (
+                <option key={sc.id} value={sc.id}>&nbsp;&nbsp;{sc.name}</option>
+              ))}
+            </optgroup>
+          ))}
         </select>
         <select value={filterBrand} onChange={e => setFilterBrand(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
           <option value="">All Brands</option>
@@ -742,7 +749,14 @@ function ProductModal({ categories, brands, warehouses, product, onClose, onSave
               <label className="block text-xs font-medium mb-1">Category</label>
               <select value={form.category_id} onChange={e => setForm({ ...form, category_id: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none">
                 <option value="">Select category</option>
-                {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {categories.filter(c => !c.parent_id).map(c => (
+                  <optgroup key={c.id} label={c.name}>
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                    {categories.filter(sc => sc.parent_id === c.id).map(sc => (
+                      <option key={sc.id} value={sc.id}>&nbsp;&nbsp;&nbsp;{sc.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
             </div>
             <div>
@@ -1020,18 +1034,42 @@ function ManageCatalogModal({ categories, brands, onClose, onSaved }: {
 }) {
   const [tab, setTab] = useState<'categories' | 'brands'>('categories');
   const [newName, setNewName] = useState('');
+  const [parentCategory, setParentCategory] = useState('');
   const [saving, setSaving] = useState(false);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+
+  const parentCategories = categories.filter(c => !c.parent_id);
+  const subCategories = categories.filter(c => c.parent_id);
+
+  function getSubCategories(parentId: string) {
+    return subCategories.filter(sc => sc.parent_id === parentId);
+  }
+
+  function toggleCategory(id: string) {
+    const newExpanded = new Set(expandedCategories);
+    if (newExpanded.has(id)) {
+      newExpanded.delete(id);
+    } else {
+      newExpanded.add(id);
+    }
+    setExpandedCategories(newExpanded);
+  }
 
   async function handleAdd() {
     if (!newName.trim()) return;
     setSaving(true);
     const table = tab === 'categories' ? 'categories' : 'brands';
-    const { error } = await supabase.from(table).insert({ name: newName.trim(), is_active: true });
+    const insertData: any = { name: newName.trim(), is_active: true, slug: newName.trim().toLowerCase().replace(/\s+/g, '-') };
+    if (tab === 'categories' && parentCategory) {
+      insertData.parent_id = parentCategory;
+    }
+    const { error } = await supabase.from(table).insert(insertData);
     if (error) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     } else {
       toast({ title: 'Success', description: `${tab === 'categories' ? 'Category' : 'Brand'} added` });
       setNewName('');
+      setParentCategory('');
       onSaved();
     }
     setSaving(false);
@@ -1048,7 +1086,7 @@ function ManageCatalogModal({ categories, brands, onClose, onSaved }: {
     }
   }
 
-  const items = tab === 'categories' ? categories : brands;
+  const items = tab === 'categories' ? parentCategories : brands;
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -1059,7 +1097,7 @@ function ManageCatalogModal({ categories, brands, onClose, onSaved }: {
         </div>
         <div className="flex border-b border-border">
           <button
-            onClick={() => { setTab('categories'); setNewName(''); }}
+            onClick={() => { setTab('categories'); setNewName(''); setParentCategory(''); }}
             className={`flex-1 py-3 text-sm font-medium transition ${tab === 'categories' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-muted-foreground hover:text-foreground'}`}
           >
             Categories ({categories.length})
@@ -1072,37 +1110,96 @@ function ManageCatalogModal({ categories, brands, onClose, onSaved }: {
           </button>
         </div>
         <div className="p-4">
-          <div className="flex gap-2 mb-4">
-            <input
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAdd()}
-              placeholder={`New ${tab === 'categories' ? 'category' : 'brand'} name...`}
-              className="flex-1 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            />
-            <button
-              onClick={handleAdd}
-              disabled={saving || !newName.trim()}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50"
-            >
-              Add
-            </button>
+          <div className="space-y-2 mb-4">
+            <div className="flex gap-2">
+              <input
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleAdd()}
+                placeholder={`New ${tab === 'categories' ? 'category' : 'brand'} name...`}
+                className="flex-1 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+              <button
+                onClick={handleAdd}
+                disabled={saving || !newName.trim()}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
+            {tab === 'categories' && (
+              <select
+                value={parentCategory}
+                onChange={e => setParentCategory(e.target.value)}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none bg-white"
+              >
+                <option value="">Top-level category</option>
+                {parentCategories.map(c => (
+                  <option key={c.id} value={c.id}>Sub-category of: {c.name}</option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="space-y-1 max-h-64 overflow-y-auto">
             {items.length === 0 ? (
               <p className="text-center text-sm text-muted-foreground py-6">No {tab} added yet. Add one above.</p>
-            ) : items.map(item => (
-              <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-muted/50 group">
-                <span className="text-sm text-foreground">{item.name}</span>
-                <button
-                  onClick={() => handleDelete(item.id)}
-                  className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 transition"
-                  title="Delete"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+            ) : tab === 'categories' ? (
+              parentCategories.map(cat => {
+                const subs = getSubCategories(cat.id);
+                const isExpanded = expandedCategories.has(cat.id);
+                return (
+                  <div key={cat.id}>
+                    <div className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-muted/50 group">
+                      <div className="flex items-center gap-2">
+                        {subs.length > 0 && (
+                          <button onClick={() => toggleCategory(cat.id)} className="text-muted-foreground hover:text-foreground">
+                            {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                        <span className="text-sm text-foreground font-medium">{cat.name}</span>
+                        {subs.length > 0 && <span className="text-xs text-muted-foreground">({subs.length})</span>}
+                      </div>
+                      <button
+                        onClick={() => handleDelete(cat.id)}
+                        className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 transition"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    {isExpanded && subs.length > 0 && (
+                      <div className="ml-6 space-y-1 border-l border-border pl-2">
+                        {subs.map(sub => (
+                          <div key={sub.id} className="flex items-center justify-between px-3 py-1.5 rounded-lg hover:bg-muted/50 group">
+                            <span className="text-sm text-muted-foreground">{sub.name}</span>
+                            <button
+                              onClick={() => handleDelete(sub.id)}
+                              className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 transition"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              brands.map(item => (
+                <div key={item.id} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-muted/50 group">
+                  <span className="text-sm text-foreground">{item.name}</span>
+                  <button
+                    onClick={() => handleDelete(item.id)}
+                    className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-muted-foreground hover:text-red-600 hover:bg-red-50 transition"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCheck as CheckCircle2, CircleAlert as AlertCircle, Printer, DollarSign, Send, CreditCard, ChevronDown } from 'lucide-react';
+import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCheck as CheckCircle2, CircleAlert as AlertCircle, Printer, DollarSign, Send, CreditCard, ChevronDown, UserPlus } from 'lucide-react';
 import type { Invoice, InvoiceStatus, Customer, Product, Payment, PaymentMethod, ProductUnit } from '@/lib/types';
 import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
 
@@ -436,6 +436,8 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showUnitSelector, setShowUnitSelector] = useState<number | null>(null);
+  const [showAddCustomer, setShowAddCustomer] = useState(false);
+  const [customerList, setCustomerList] = useState(customers);
 
   function addItem() {
     setItems([...items, { product_id: '', quantity: 1, unit_price: 0, discount_percent: 0, base_quantity: 1 }]);
@@ -497,6 +499,14 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
   }, 0);
 
   const amountPaid = form.payment_type === 'full' ? subtotal : (form.payment_type === 'partial' ? form.amount_paid : 0);
+
+  async function handleAddCustomer(newCustomerId: string) {
+    const { data } = await supabase.from('customers').select('*').eq('id', newCustomerId).single();
+    if (data) {
+      setCustomerList([...customerList, data as Customer]);
+      setForm({ ...form, customer_id: newCustomerId });
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -631,10 +641,20 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-medium mb-1">Customer *</label>
-              <select required value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none">
-                <option value="">Select customer</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
-              </select>
+              <div className="flex gap-2">
+                <select required value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} className="flex-1 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none">
+                  <option value="">Select customer</option>
+                  {customerList.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowAddCustomer(true)}
+                  title="Add New Customer"
+                  className="flex items-center justify-center border border-blue-500 text-blue-600 rounded-lg px-2 hover:bg-blue-50 transition shrink-0"
+                >
+                  <UserPlus className="w-4 h-4" />
+                </button>
+              </div>
             </div>
             <div>
               <label className="block text-xs font-medium mb-1">Invoice Date</label>
@@ -812,6 +832,13 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
             </button>
           </div>
         </form>
+
+        {showAddCustomer && (
+          <AddCustomerModal
+            onClose={() => setShowAddCustomer(false)}
+            onSaved={(id) => { handleAddCustomer(id); setShowAddCustomer(false); }}
+          />
+        )}
       </div>
     </div>
   );
@@ -945,6 +972,132 @@ function RecordPaymentModal({ invoice, onClose, onSaved }: { invoice: InvoiceWit
             <button type="submit" disabled={saving} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60">
               {saving ? 'Recording...' : 'Record Payment'}
             </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function AddCustomerModal({ onClose, onSaved }: { onClose: () => void; onSaved: (id: string) => void }) {
+  const [form, setForm] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    address: '',
+    type: 'retail' as 'retail' | 'contractor' | 'builder' | 'architect' | 'interior_designer' | 'corporate' | 'government',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim()) { setError('Customer name is required'); return; }
+    setSaving(true);
+    setError('');
+
+    const code = `CUST-${Date.now().toString().slice(-6)}`;
+    const { data, error: insertError } = await supabase
+      .from('customers')
+      .insert({
+        code,
+        name: form.name.trim(),
+        phone: form.phone || null,
+        email: form.email || null,
+        address: form.address || null,
+        type: form.type,
+        country: 'Bangladesh',
+        is_active: true,
+        credit_limit: 0,
+        credit_days: 0,
+        outstanding_balance: 0,
+        total_purchases: 0,
+        loyalty_points: 0,
+        discount_percent: 0,
+      })
+      .select('id')
+      .single();
+
+    if (insertError) {
+      setError(insertError.message);
+      setSaving(false);
+      return;
+    }
+
+    toast({ title: 'Success', description: 'Customer added successfully' });
+    onSaved(data.id);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-base font-bold flex items-center gap-2"><UserPlus className="w-4 h-4" />Add New Customer</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSave} className="p-4 space-y-3">
+          {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+          <div>
+            <label className="block text-xs font-medium mb-1">Customer Name *</label>
+            <input
+              required
+              value={form.name}
+              onChange={e => setForm({ ...form, name: e.target.value })}
+              placeholder="Enter customer name..."
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium mb-1">Phone</label>
+              <input
+                value={form.phone}
+                onChange={e => setForm({ ...form, phone: e.target.value })}
+                placeholder="Phone number..."
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1">Type</label>
+              <select
+                value={form.type}
+                onChange={e => setForm({ ...form, type: e.target.value as any })}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none"
+              >
+                <option value="retail">Retail</option>
+                <option value="contractor">Contractor</option>
+                <option value="builder">Builder</option>
+                <option value="architect">Architect</option>
+                <option value="interior_designer">Interior Designer</option>
+                <option value="corporate">Corporate</option>
+                <option value="government">Government</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Email</label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={e => setForm({ ...form, email: e.target.value })}
+              placeholder="Email address..."
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Address</label>
+            <textarea
+              value={form.address}
+              onChange={e => setForm({ ...form, address: e.target.value })}
+              placeholder="Full address..."
+              rows={2}
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none"
+            />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-muted transition">Cancel</button>
+            <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50">{saving ? 'Saving...' : 'Add Customer'}</button>
           </div>
         </form>
       </div>

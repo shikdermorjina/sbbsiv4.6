@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { Search, Plus, Minus, Trash2, ShoppingCart, CreditCard, Banknote, Smartphone, CircleCheck as CheckCircle2, X, Receipt, ChevronDown, Camera } from 'lucide-react';
+import { Search, Plus, Minus, Trash2, ShoppingCart, CreditCard, Banknote, Smartphone, CircleCheck as CheckCircle2, X, Receipt, ChevronDown, Camera, UserPlus } from 'lucide-react';
 import type { ProductUnit } from '@/lib/types';
 import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
 
@@ -57,6 +57,7 @@ export default function POSPage() {
   const [lastInvoiceNumber, setLastInvoiceNumber] = useState('');
   const [unitSelectorProduct, setUnitSelectorProduct] = useState<ProductData | null>(null);
   const [showScanner, setShowScanner] = useState(false);
+  const [showAddCustomer, setShowAddCustomer] = useState(false);
 
   useEffect(() => {
     loadProducts();
@@ -327,10 +328,19 @@ export default function POSPage() {
             <Camera className="w-4 h-4" />
             <span className="hidden md:inline">Scan</span>
           </button>
-          <select value={selectedCustomer} onChange={e => setSelectedCustomer(e.target.value)} className="border border-border rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none min-w-[180px]">
-            <option value={WALK_IN_CUSTOMER_ID}>Walk-in Customer</option>
-            {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
-          </select>
+          <div className="flex items-center gap-2">
+            <select value={selectedCustomer} onChange={e => setSelectedCustomer(e.target.value)} className="border border-border rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none min-w-[180px]">
+              <option value={WALK_IN_CUSTOMER_ID}>Walk-in Customer</option>
+              {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
+            </select>
+            <button
+              onClick={() => setShowAddCustomer(true)}
+              title="Add New Customer"
+              className="flex items-center gap-1.5 border border-blue-500 text-blue-600 rounded-xl px-3 py-2.5 text-sm hover:bg-blue-50 transition shrink-0"
+            >
+              <UserPlus className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 content-start pb-4">
@@ -473,6 +483,13 @@ export default function POSPage() {
         />
       )}
 
+      {showAddCustomer && (
+        <AddCustomerModal
+          onClose={() => setShowAddCustomer(false)}
+          onSaved={(id) => { loadCustomers(); setSelectedCustomer(id); }}
+        />
+      )}
+
       {unitSelectorProduct && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl">
@@ -609,6 +626,132 @@ function BarcodeScannerModal({ onDetected, onClose }: { onDetected: (sku: string
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AddCustomerModal({ onClose, onSaved }: { onClose: () => void; onSaved: (id: string) => void }) {
+  const [form, setForm] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    address: '',
+    type: 'retail' as 'retail' | 'contractor' | 'builder' | 'architect' | 'interior_designer' | 'corporate' | 'government',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim()) { setError('Customer name is required'); return; }
+    setSaving(true);
+    setError('');
+
+    const code = `CUST-${Date.now().toString().slice(-6)}`;
+    const { data, error: insertError } = await supabase
+      .from('customers')
+      .insert({
+        code,
+        name: form.name.trim(),
+        phone: form.phone || null,
+        email: form.email || null,
+        address: form.address || null,
+        type: form.type,
+        country: 'Bangladesh',
+        is_active: true,
+        credit_limit: 0,
+        credit_days: 0,
+        outstanding_balance: 0,
+        total_purchases: 0,
+        loyalty_points: 0,
+        discount_percent: 0,
+      })
+      .select('id')
+      .single();
+
+    if (insertError) {
+      setError(insertError.message);
+      setSaving(false);
+      return;
+    }
+
+    toast({ title: 'Success', description: 'Customer added successfully' });
+    onSaved(data.id);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-base font-bold flex items-center gap-2"><UserPlus className="w-4 h-4" />Add New Customer</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSave} className="p-4 space-y-3">
+          {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+          <div>
+            <label className="block text-xs font-medium mb-1">Customer Name *</label>
+            <input
+              required
+              value={form.name}
+              onChange={e => setForm({ ...form, name: e.target.value })}
+              placeholder="Enter customer name..."
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium mb-1">Phone</label>
+              <input
+                value={form.phone}
+                onChange={e => setForm({ ...form, phone: e.target.value })}
+                placeholder="Phone number..."
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1">Type</label>
+              <select
+                value={form.type}
+                onChange={e => setForm({ ...form, type: e.target.value as any })}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none"
+              >
+                <option value="retail">Retail</option>
+                <option value="contractor">Contractor</option>
+                <option value="builder">Builder</option>
+                <option value="architect">Architect</option>
+                <option value="interior_designer">Interior Designer</option>
+                <option value="corporate">Corporate</option>
+                <option value="government">Government</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Email</label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={e => setForm({ ...form, email: e.target.value })}
+              placeholder="Email address..."
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Address</label>
+            <textarea
+              value={form.address}
+              onChange={e => setForm({ ...form, address: e.target.value })}
+              placeholder="Full address..."
+              rows={2}
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none"
+            />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-muted transition">Cancel</button>
+            <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50">{saving ? 'Saving...' : 'Add Customer'}</button>
+          </div>
+        </form>
       </div>
     </div>
   );
