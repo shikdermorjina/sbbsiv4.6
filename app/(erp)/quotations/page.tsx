@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { Plus, Search, Eye, Send, X, Trash2, FileText, ArrowRight } from 'lucide-react';
+import { Plus, Search, Eye, Send, X, Trash2, FileText, ArrowRight, UserPlus, CreditCard, DollarSign, CircleCheck as CheckCircle } from 'lucide-react';
 import type { Quotation, QuotationStatus, Customer, Product } from '@/lib/types';
 
 const statusConfig: Record<QuotationStatus, { label: string; color: string; bg: string }> = {
@@ -31,6 +31,7 @@ export default function QuotationsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [viewingQuotation, setViewingQuotation] = useState<QuotationWithCustomer | null>(null);
   const [quotationItems, setQuotationItems] = useState<any[]>([]);
+  const [convertingQuotation, setConvertingQuotation] = useState<QuotationWithCustomer | null>(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -69,62 +70,13 @@ export default function QuotationsPage() {
     }
   }
 
-  async function convertToInvoice(quotation: QuotationWithCustomer) {
+  function initiateConvert(quotation: QuotationWithCustomer) {
     if (quotation.status === 'converted') {
       toast({ title: 'Error', description: 'Quotation already converted', variant: 'destructive' });
       return;
     }
-
-    const { data: items } = await supabase
-      .from('quotation_items')
-      .select('*, product:products(name, sku, unit)')
-      .eq('quotation_id', quotation.id);
-
-    const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
-
-    const { data: invoice, error: invError } = await supabase
-      .from('invoices')
-      .insert({
-        invoice_number: invoiceNumber,
-        customer_id: quotation.customer_id,
-        quotation_id: quotation.id,
-        invoice_date: new Date().toISOString().split('T')[0],
-        subtotal: quotation.subtotal,
-        discount_amount: quotation.discount_amount,
-        tax_amount: quotation.tax_amount,
-        total_amount: quotation.total_amount,
-        amount_paid: 0,
-        balance_due: quotation.total_amount,
-        status: 'draft',
-        is_pos: false,
-      })
-      .select()
-      .single();
-
-    if (invError) {
-      toast({ title: 'Error', description: invError.message, variant: 'destructive' });
-      return;
-    }
-
-    if (items && items.length > 0) {
-      const invoiceItems = items.map((item: any) => ({
-        invoice_id: invoice.id,
-        product_id: item.product_id,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        discount_percent: item.discount_percent || 0,
-        tax_rate: item.tax_rate || 0,
-        subtotal: item.subtotal,
-      }));
-
-      await supabase.from('invoice_items').insert(invoiceItems);
-    }
-
-    await supabase.from('quotations').update({ status: 'converted' }).eq('id', quotation.id);
-
-    toast({ title: 'Success', description: `Invoice ${invoiceNumber} created from quotation` });
-    loadData();
     setViewingQuotation(null);
+    setConvertingQuotation(quotation);
   }
 
   const filtered = quotations.filter(q =>
@@ -212,7 +164,7 @@ export default function QuotationsPage() {
                           <button onClick={() => sendQuotation(q)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-green-50 text-muted-foreground hover:text-green-600 transition"><Send className="w-3.5 h-3.5" /></button>
                         )}
                         {q.status !== 'converted' && q.status !== 'rejected' && q.status !== 'expired' && (
-                          <button onClick={() => convertToInvoice(q)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-purple-50 text-muted-foreground hover:text-purple-600 transition" title="Convert to Invoice"><ArrowRight className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => initiateConvert(q)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-teal-50 text-muted-foreground hover:text-teal-600 transition" title="Convert to Invoice"><ArrowRight className="w-3.5 h-3.5" /></button>
                         )}
                       </div>
                     </td>
@@ -229,7 +181,7 @@ export default function QuotationsPage() {
           customers={customers}
           products={products}
           onClose={() => setShowCreateModal(false)}
-          onSaved={loadData}
+          onSaved={() => { loadData(); }}
         />
       )}
 
@@ -238,19 +190,123 @@ export default function QuotationsPage() {
           quotation={viewingQuotation}
           items={quotationItems}
           onClose={() => setViewingQuotation(null)}
-          onConvert={() => convertToInvoice(viewingQuotation)}
+          onConvert={() => initiateConvert(viewingQuotation)}
+        />
+      )}
+
+      {convertingQuotation && (
+        <ConvertToInvoiceModal
+          quotation={convertingQuotation}
+          onClose={() => setConvertingQuotation(null)}
+          onConverted={() => { setConvertingQuotation(null); loadData(); }}
         />
       )}
     </div>
   );
 }
 
-function CreateQuotationModal({ customers, products, onClose, onSaved }: {
+function AddCustomerModal({ onClose, onSaved }: { onClose: () => void; onSaved: (id: string) => void }) {
+  const [form, setForm] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    address: '',
+    type: 'retail' as 'retail' | 'contractor' | 'builder' | 'architect' | 'interior_designer' | 'corporate' | 'government',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim()) { setError('Customer name is required'); return; }
+    setSaving(true);
+    setError('');
+
+    const code = `CUST-${Date.now().toString().slice(-6)}`;
+    const { data, error: insertError } = await supabase
+      .from('customers')
+      .insert({
+        code,
+        name: form.name.trim(),
+        phone: form.phone || null,
+        email: form.email || null,
+        address: form.address || null,
+        type: form.type,
+        country: 'Bangladesh',
+        is_active: true,
+        credit_limit: 0,
+        credit_days: 0,
+        outstanding_balance: 0,
+        total_purchases: 0,
+        loyalty_points: 0,
+        discount_percent: 0,
+      })
+      .select('id')
+      .single();
+
+    if (insertError) { setError(insertError.message); setSaving(false); return; }
+
+    toast({ title: 'Success', description: 'Customer added successfully' });
+    onSaved(data.id);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4" style={{ zIndex: 60 }}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-base font-bold flex items-center gap-2"><UserPlus className="w-4 h-4" />Add New Customer</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSave} className="p-4 space-y-3">
+          {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+          <div>
+            <label className="block text-xs font-medium mb-1">Customer Name *</label>
+            <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Enter customer name..." className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium mb-1">Phone</label>
+              <input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="Phone number..." className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1">Type</label>
+              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value as any })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none">
+                <option value="retail">Retail</option>
+                <option value="contractor">Contractor</option>
+                <option value="builder">Builder</option>
+                <option value="architect">Architect</option>
+                <option value="interior_designer">Interior Designer</option>
+                <option value="corporate">Corporate</option>
+                <option value="government">Government</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Email</label>
+            <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="Email address..." className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Address</label>
+            <textarea value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} placeholder="Full address..." rows={2} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 resize-none" />
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-muted transition">Cancel</button>
+            <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50">{saving ? 'Saving...' : 'Add Customer'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function CreateQuotationModal({ customers: initialCustomers, products, onClose, onSaved }: {
   customers: Customer[];
   products: Product[];
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const [customers, setCustomers] = useState<Customer[]>(initialCustomers);
   const [form, setForm] = useState({
     customer_id: '',
     issue_date: new Date().toISOString().split('T')[0],
@@ -260,6 +316,7 @@ function CreateQuotationModal({ customers, products, onClose, onSaved }: {
   const [items, setItems] = useState<{ product_id: string; quantity: number; unit_price: number; discount_percent: number }[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [showAddCustomer, setShowAddCustomer] = useState(false);
 
   function addItem() {
     setItems([...items, { product_id: '', quantity: 1, unit_price: 0, discount_percent: 0 }]);
@@ -340,92 +397,373 @@ function CreateQuotationModal({ customers, products, onClose, onSaved }: {
   }
 
   return (
+    <>
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-white z-10">
+            <h2 className="text-base font-bold">Create Quotation</h2>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+          </div>
+          <form onSubmit={handleSave} className="p-6 space-y-4">
+            {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="block text-xs font-medium mb-1">Customer *</label>
+                <div className="flex gap-1.5">
+                  <select required value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} className="flex-1 min-w-0 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none">
+                    <option value="">Select customer</option>
+                    {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddCustomer(true)}
+                    title="Add new customer"
+                    className="flex-shrink-0 w-9 h-9 flex items-center justify-center rounded-lg border border-border hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 text-muted-foreground transition"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Issue Date</label>
+                <input type="date" value={form.issue_date} onChange={e => setForm({ ...form, issue_date: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Expiry Date</label>
+                <input type="date" value={form.expiry_date} onChange={e => setForm({ ...form, expiry_date: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-medium">Line Items</label>
+                <button type="button" onClick={addItem} className="text-xs text-blue-600 hover:text-blue-700 font-medium">+ Add Item</button>
+              </div>
+              <div className="border border-border rounded-lg overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Product</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-20">Qty</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-28">Price</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-20">Disc%</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-28">Total</th>
+                      <th className="w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {items.length === 0 ? (
+                      <tr><td colSpan={6} className="px-3 py-4 text-center text-xs text-muted-foreground">No items added</td></tr>
+                    ) : items.map((item, index) => (
+                      <tr key={index}>
+                        <td className="px-3 py-2">
+                          <select value={item.product_id} onChange={e => updateItem(index, 'product_id', e.target.value)} className="w-full border border-border rounded px-2 py-1 text-sm focus:outline-none">
+                            <option value="">Select product</option>
+                            {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" min="1" value={item.quantity} onChange={e => updateItem(index, 'quantity', parseInt(e.target.value) || 1)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(index, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" min="0" max="100" value={item.discount_percent} onChange={e => updateItem(index, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
+                        </td>
+                        <td className="px-3 py-2 text-right text-sm font-semibold">{formatCurrency(item.quantity * item.unit_price * (1 - item.discount_percent / 100))}</td>
+                        <td className="px-2 py-2">
+                          <button type="button" onClick={() => removeItem(index)} className="text-red-500 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="flex justify-end bg-muted/30 rounded-lg p-3">
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground">Total</p>
+                <p className="text-lg font-bold text-foreground">{formatCurrency(subtotal)}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted transition">Cancel</button>
+              <button type="submit" disabled={saving} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60">
+                {saving ? 'Creating...' : 'Create Quotation'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {showAddCustomer && (
+        <AddCustomerModal
+          onClose={() => setShowAddCustomer(false)}
+          onSaved={(id) => {
+            supabase.from('customers').select('*').eq('is_active', true).order('name').then(({ data }) => {
+              if (data) setCustomers(data);
+            });
+            setForm(f => ({ ...f, customer_id: id }));
+            setShowAddCustomer(false);
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function ConvertToInvoiceModal({ quotation, onClose, onConverted }: {
+  quotation: QuotationWithCustomer;
+  onClose: () => void;
+  onConverted: () => void;
+}) {
+  const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
+  const [form, setForm] = useState({
+    payment_type: 'credit' as 'credit' | 'partial' | 'full',
+    payment_method: 'cash',
+    amount_paid: 0,
+    reference_number: '',
+    notes: '',
+    invoice_date: new Date().toISOString().split('T')[0],
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    supabase.from('payment_methods').select('code, name').eq('is_active', true).order('sort_order')
+      .then(({ data }) => { if (data) setPaymentMethods(data); });
+  }, []);
+
+  const totalAmount = Number(quotation.total_amount);
+
+  const effectiveAmountPaid =
+    form.payment_type === 'credit' ? 0 :
+    form.payment_type === 'full' ? totalAmount :
+    form.amount_paid;
+
+  const balanceDue = totalAmount - effectiveAmountPaid;
+
+  const invoiceStatus =
+    form.payment_type === 'full' ? 'paid' :
+    form.payment_type === 'partial' && effectiveAmountPaid > 0 ? 'partial' :
+    'draft';
+
+  async function handleConvert(e: React.FormEvent) {
+    e.preventDefault();
+    if (form.payment_type === 'partial' && (form.amount_paid <= 0 || form.amount_paid >= totalAmount)) {
+      setError('Partial payment amount must be greater than 0 and less than the total amount');
+      return;
+    }
+
+    setSaving(true);
+    setError('');
+
+    const { data: items } = await supabase
+      .from('quotation_items')
+      .select('*')
+      .eq('quotation_id', quotation.id);
+
+    const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
+
+    const { data: invoice, error: invError } = await supabase
+      .from('invoices')
+      .insert({
+        invoice_number: invoiceNumber,
+        customer_id: quotation.customer_id,
+        quotation_id: quotation.id,
+        invoice_date: form.invoice_date,
+        subtotal: quotation.subtotal,
+        discount_amount: quotation.discount_amount,
+        tax_amount: quotation.tax_amount,
+        total_amount: totalAmount,
+        amount_paid: effectiveAmountPaid,
+        balance_due: balanceDue,
+        status: invoiceStatus,
+        is_pos: false,
+      })
+      .select()
+      .single();
+
+    if (invError) { setError(invError.message); setSaving(false); return; }
+
+    if (items && items.length > 0) {
+      const invoiceItems = items.map((item: any) => ({
+        invoice_id: invoice.id,
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        discount_percent: item.discount_percent || 0,
+        tax_rate: item.tax_rate || 0,
+        subtotal: item.subtotal,
+      }));
+      await supabase.from('invoice_items').insert(invoiceItems);
+    }
+
+    if (effectiveAmountPaid > 0) {
+      const paymentNumber = `PAY-${Date.now().toString().slice(-6)}`;
+      await supabase.from('payments').insert({
+        payment_number: paymentNumber,
+        payment_type: 'received',
+        reference_type: 'invoice',
+        reference_id: invoice.id,
+        customer_id: quotation.customer_id,
+        amount: effectiveAmountPaid,
+        payment_method: form.payment_method,
+        payment_date: form.invoice_date,
+        reference_number: form.reference_number || null,
+        notes: form.notes || (form.payment_type === 'full' ? 'Full payment at invoice conversion' : 'Partial payment at invoice conversion'),
+      });
+    }
+
+    const { data: customer } = await supabase
+      .from('customers')
+      .select('outstanding_balance, total_purchases')
+      .eq('id', quotation.customer_id)
+      .single();
+
+    if (customer) {
+      await supabase
+        .from('customers')
+        .update({
+          outstanding_balance: (customer.outstanding_balance || 0) + balanceDue,
+          total_purchases: (customer.total_purchases || 0) + totalAmount,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', quotation.customer_id);
+    }
+
+    await supabase.from('quotations').update({ status: 'converted' }).eq('id', quotation.id);
+
+    toast({ title: 'Success', description: `Invoice ${invoiceNumber} created from quotation` });
+    onConverted();
+  }
+
+  return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-white z-10">
-          <h2 className="text-base font-bold">Create Quotation</h2>
+          <div>
+            <h2 className="text-base font-bold">Convert to Invoice</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{quotation.quote_number} &rarr; {quotation.customer?.name}</p>
+          </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
         </div>
-        <form onSubmit={handleSave} className="p-6 space-y-4">
+
+        <form onSubmit={handleConvert} className="p-6 space-y-5">
           {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="bg-muted/30 rounded-lg p-4 flex items-center justify-between">
             <div>
-              <label className="block text-xs font-medium mb-1">Customer *</label>
-              <select required value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none">
-                <option value="">Select customer</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
-              </select>
+              <p className="text-xs text-muted-foreground">Invoice Amount</p>
+              <p className="text-2xl font-bold text-foreground">{formatCurrency(totalAmount)}</p>
             </div>
-            <div>
-              <label className="block text-xs font-medium mb-1">Issue Date</label>
-              <input type="date" value={form.issue_date} onChange={e => setForm({ ...form, issue_date: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1">Expiry Date</label>
-              <input type="date" value={form.expiry_date} onChange={e => setForm({ ...form, expiry_date: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">Invoice Date</p>
+              <input type="date" value={form.invoice_date} onChange={e => setForm({ ...form, invoice_date: e.target.value })} className="border border-border rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 mt-0.5" />
             </div>
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-medium">Line Items</label>
-              <button type="button" onClick={addItem} className="text-xs text-blue-600 hover:text-blue-700 font-medium">+ Add Item</button>
-            </div>
-            <div className="border border-border rounded-lg overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-muted/40">
-                  <tr>
-                    <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Product</th>
-                    <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-20">Qty</th>
-                    <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-28">Price</th>
-                    <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-20">Disc%</th>
-                    <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-28">Total</th>
-                    <th className="w-8"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {items.length === 0 ? (
-                    <tr><td colSpan={6} className="px-3 py-4 text-center text-xs text-muted-foreground">No items added</td></tr>
-                  ) : items.map((item, index) => (
-                    <tr key={index}>
-                      <td className="px-3 py-2">
-                        <select value={item.product_id} onChange={e => updateItem(index, 'product_id', e.target.value)} className="w-full border border-border rounded px-2 py-1 text-sm focus:outline-none">
-                          <option value="">Select product</option>
-                          {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2">
-                        <input type="number" min="1" value={item.quantity} onChange={e => updateItem(index, 'quantity', parseInt(e.target.value) || 1)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input type="number" min="0" step="0.01" value={item.unit_price} onChange={e => updateItem(index, 'unit_price', parseFloat(e.target.value) || 0)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input type="number" min="0" max="100" value={item.discount_percent} onChange={e => updateItem(index, 'discount_percent', parseFloat(e.target.value) || 0)} className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none" />
-                      </td>
-                      <td className="px-3 py-2 text-right text-sm font-semibold">{formatCurrency(item.quantity * item.unit_price * (1 - item.discount_percent / 100))}</td>
-                      <td className="px-2 py-2">
-                        <button type="button" onClick={() => removeItem(index)} className="text-red-500 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <label className="block text-xs font-medium mb-3">Payment Type *</label>
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, payment_type: 'credit', amount_paid: 0 })}
+                className={`p-3 border rounded-lg text-center transition ${form.payment_type === 'credit' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-border hover:border-gray-300 text-foreground'}`}
+              >
+                <CreditCard className="w-5 h-5 mx-auto mb-1" />
+                <p className="text-xs font-medium">Full Credit</p>
+                <p className="text-[10px] text-muted-foreground">Pay later</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, payment_type: 'partial', amount_paid: 0 })}
+                className={`p-3 border rounded-lg text-center transition ${form.payment_type === 'partial' ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-border hover:border-gray-300 text-foreground'}`}
+              >
+                <DollarSign className="w-5 h-5 mx-auto mb-1" />
+                <p className="text-xs font-medium">Partial</p>
+                <p className="text-[10px] text-muted-foreground">Pay some now</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, payment_type: 'full', amount_paid: totalAmount })}
+                className={`p-3 border rounded-lg text-center transition ${form.payment_type === 'full' ? 'border-green-600 bg-green-50 text-green-700' : 'border-border hover:border-gray-300 text-foreground'}`}
+              >
+                <CheckCircle className="w-5 h-5 mx-auto mb-1" />
+                <p className="text-xs font-medium">Full Payment</p>
+                <p className="text-[10px] text-muted-foreground">Pay all now</p>
+              </button>
             </div>
           </div>
 
-          <div className="flex justify-end bg-muted/30 rounded-lg p-3">
-            <div className="text-right">
-              <p className="text-xs text-muted-foreground">Total</p>
-              <p className="text-lg font-bold text-foreground">{formatCurrency(subtotal)}</p>
+          {form.payment_type !== 'credit' && (
+            <div className="space-y-4 border border-border rounded-lg p-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium mb-1">Payment Method *</label>
+                  <select value={form.payment_method} onChange={e => setForm({ ...form, payment_method: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none">
+                    {paymentMethods.length > 0
+                      ? paymentMethods.map(m => <option key={m.code} value={m.code}>{m.name}</option>)
+                      : <>
+                          <option value="cash">Cash</option>
+                          <option value="bank_transfer">Bank Transfer</option>
+                          <option value="cheque">Cheque</option>
+                          <option value="card">Card</option>
+                          <option value="mobile_banking">Mobile Banking</option>
+                        </>
+                    }
+                  </select>
+                </div>
+                {form.payment_type === 'partial' && (
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Amount Paid *</label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      max={totalAmount - 0.01}
+                      value={form.amount_paid}
+                      onChange={e => setForm({ ...form, amount_paid: parseFloat(e.target.value) || 0 })}
+                      className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Reference Number</label>
+                <input value={form.reference_number} onChange={e => setForm({ ...form, reference_number: e.target.value })} placeholder="Cheque no., transaction ID..." className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Notes</label>
+                <input value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Optional payment notes..." className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+              </div>
+            </div>
+          )}
+
+          <div className="bg-muted/30 rounded-lg p-3 space-y-1.5 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Total Amount</span>
+              <span className="font-semibold">{formatCurrency(totalAmount)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Amount Paid</span>
+              <span className={`font-semibold ${effectiveAmountPaid > 0 ? 'text-green-600' : 'text-muted-foreground'}`}>{formatCurrency(effectiveAmountPaid)}</span>
+            </div>
+            <div className="flex justify-between border-t border-border pt-1.5">
+              <span className="font-medium">Balance Due</span>
+              <span className={`font-bold ${balanceDue > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(balanceDue)}</span>
             </div>
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-2">
+          <div className="flex items-center justify-end gap-3">
             <button type="button" onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted transition">Cancel</button>
-            <button type="submit" disabled={saving} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60">
-              {saving ? 'Creating...' : 'Create Quotation'}
+            <button type="submit" disabled={saving} className="flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60">
+              <FileText className="w-4 h-4" />
+              {saving ? 'Converting...' : 'Convert to Invoice'}
             </button>
           </div>
         </form>
