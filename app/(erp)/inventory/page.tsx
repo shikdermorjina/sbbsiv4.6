@@ -1152,6 +1152,12 @@ Tiles Premium,TIL-050,Flooring,CeramicCo,sqft,25,45,100,500,,,Carton,20,800`;
     let skipped = 0;
     const errors: string[] = [];
 
+    if (!defaultWarehouse) {
+      setResults({ success: 0, skipped: rows.length, errors: ['No warehouse found. Please create a warehouse first.'] });
+      setImporting(false);
+      return;
+    }
+
     // Group rows by base product (same Name, different variants)
     const productGroups = new Map<string, any[]>();
 
@@ -1377,12 +1383,31 @@ Tiles Premium,TIL-050,Flooring,CeramicCo,sqft,25,45,100,500,,,Carton,20,800`;
               });
             }
           } else {
-            const { error: invError } = await supabase.from('inventory_items').upsert({
-              tenant_id: '00000000-0000-0000-0000-000000000001',
-              product_id: productId,
-              warehouse_id: defaultWarehouse,
-              quantity_on_hand: currentStock,
-            }, { onConflict: 'product_id,warehouse_id' });
+            // Check if inventory already exists
+            const { data: existingInv } = await supabase
+              .from('inventory_items')
+              .select('id')
+              .eq('product_id', productId)
+              .eq('warehouse_id', defaultWarehouse)
+              .maybeSingle();
+
+            let invError;
+            if (existingInv) {
+              // Update existing
+              const { error } = await supabase.from('inventory_items')
+                .update({ quantity_on_hand: currentStock })
+                .eq('id', existingInv.id);
+              invError = error;
+            } else {
+              // Insert new
+              const { error } = await supabase.from('inventory_items').insert({
+                tenant_id: '00000000-0000-0000-0000-000000000001',
+                product_id: productId,
+                warehouse_id: defaultWarehouse,
+                quantity_on_hand: currentStock,
+              });
+              invError = error;
+            }
 
             if (!invError) {
               await supabase.from('stock_movements').insert({
@@ -1395,6 +1420,8 @@ Tiles Premium,TIL-050,Flooring,CeramicCo,sqft,25,45,100,500,,,Carton,20,800`;
                 reference_type: 'import',
                 notes: 'Initial stock from import',
               });
+            } else {
+              errors.push(`Row ${firstRow._rowIndex}: Failed to set stock - ${invError.message}`);
             }
           }
         }
