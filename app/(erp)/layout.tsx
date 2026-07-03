@@ -6,12 +6,18 @@ import { supabase } from '@/lib/supabase';
 import Sidebar from '@/components/layout/Sidebar';
 import Header from '@/components/layout/Header';
 import QuickActionDrawer from '@/components/ui/QuickActionDrawer';
-import { Menu } from 'lucide-react';
+import { Menu, PanelLeftClose, PanelLeft } from 'lucide-react';
 
 export default function ERPLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('sidebarCollapsed');
+    if (saved) setSidebarCollapsed(saved === 'true');
+  }, []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -30,6 +36,14 @@ export default function ERPLayout({ children }: { children: React.ReactNode }) {
 
     return () => subscription.unsubscribe();
   }, [router]);
+
+  function toggleSidebarCollapsed() {
+    setSidebarCollapsed(prev => {
+      const newValue = !prev;
+      localStorage.setItem('sidebarCollapsed', String(newValue));
+      return newValue;
+    });
+  }
 
   if (loading) {
     return (
@@ -52,14 +66,25 @@ export default function ERPLayout({ children }: { children: React.ReactNode }) {
         />
       )}
 
-      {/* Sidebar — hidden on mobile, shown on lg+ */}
+      {/* Sidebar — hidden on mobile, collapsible on lg+ */}
       <div className={`
         fixed inset-y-0 left-0 z-50 lg:relative lg:z-auto
-        transform transition-transform duration-300 ease-in-out
+        transform transition-all duration-300 ease-in-out
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+        ${sidebarCollapsed ? 'lg:w-[60px]' : 'lg:w-auto'}
       `}>
-        <Sidebar />
+        <Sidebar collapsed={sidebarCollapsed} />
       </div>
+
+      {/* Collapse toggle button - desktop only */}
+      <button
+        onClick={toggleSidebarCollapsed}
+        className="hidden lg:flex fixed left-0 top-1/2 -translate-y-1/2 z-30 w-5 h-12 items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors rounded-r-lg"
+        style={{ left: sidebarCollapsed ? '60px' : '220px' }}
+        title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        {sidebarCollapsed ? <PanelLeft className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
+      </button>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

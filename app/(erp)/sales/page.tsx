@@ -9,6 +9,7 @@ import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCh
 import type { Invoice, InvoiceStatus, Customer, Product, Payment, PaymentMethod, ProductUnit } from '@/lib/types';
 import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
 import ProductSearchInput from '@/components/ui/ProductSearchInput';
+import ProductFilterDropdown from '@/components/ui/ProductFilterDropdown';
 import PrintTemplate from '@/components/PrintTemplate';
 
 const statusConfig: Record<InvoiceStatus, { label: string; color: string; bg: string }> = {
@@ -52,6 +53,7 @@ export default function SalesPage() {
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [productFilteredIds, setProductFilteredIds] = useState<Set<string> | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
   const [stats, setStats] = useState({ total: 0, paid: 0, outstanding: 0, overdue: 0 });
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -256,25 +258,25 @@ export default function SalesPage() {
     return true;
   });
 
-  // Filter by product (requires async check, so we handle separately)
-  const [productFilteredInvoices, setProductFilteredInvoices] = useState<InvoiceWithCustomer[]>([]);
-
+  // Fetch product-filtered invoice IDs when filterProduct changes
   useEffect(() => {
-    async function filterByProduct() {
-      if (!filterProduct) {
-        setProductFilteredInvoices(filtered);
-        return;
-      }
-      const { data: invoiceItems } = await supabase
-        .from('invoice_items')
-        .select('invoice_id')
-        .eq('product_id', filterProduct);
-
-      const invoiceIds = new Set((invoiceItems || []).map((item: any) => item.invoice_id));
-      setProductFilteredInvoices(filtered.filter(inv => invoiceIds.has(inv.id)));
+    if (!filterProduct) {
+      setProductFilteredIds(null);
+      return;
     }
-    filterByProduct();
-  }, [filterProduct, filtered]);
+    supabase
+      .from('invoice_items')
+      .select('invoice_id')
+      .eq('product_id', filterProduct)
+      .then(({ data }) => {
+        setProductFilteredIds(new Set((data || []).map((item: any) => item.invoice_id)));
+      });
+  }, [filterProduct]);
+
+  // Apply product filter to filtered results
+  const displayInvoices = productFilteredIds === null
+    ? filtered
+    : filtered.filter(inv => productFilteredIds.has(inv.id));
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -338,10 +340,11 @@ export default function SalesPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-border">
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Product</label>
-              <select value={filterProduct} onChange={e => setFilterProduct(e.target.value)} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none">
-                <option value="">All Products</option>
-                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              <ProductFilterDropdown
+                value={filterProduct}
+                onChange={setFilterProduct}
+                placeholder="All Products"
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Customer</label>
@@ -416,9 +419,9 @@ export default function SalesPage() {
             <tbody className="divide-y divide-border">
               {loading ? Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i}>{Array.from({ length: 9 }).map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-muted rounded animate-pulse" /></td>)}</tr>
-              )) : productFilteredInvoices.length === 0 ? (
+              )) : displayInvoices.length === 0 ? (
                 <tr><td colSpan={9} className="px-4 py-12 text-center text-muted-foreground text-sm">No invoices found</td></tr>
-              ) : productFilteredInvoices.map((inv) => {
+              ) : displayInvoices.map((inv) => {
                 const cfg = statusConfig[inv.status as InvoiceStatus] || statusConfig.draft;
                 const hasReturns = inv.sales_returns && inv.sales_returns.length > 0;
                 const totalReturnedQty = hasReturns
@@ -490,7 +493,7 @@ export default function SalesPage() {
           </table>
         </div>
         <div className="px-4 py-3 border-t border-border">
-          <p className="text-xs text-muted-foreground">{productFilteredInvoices.length} invoices</p>
+          <p className="text-xs text-muted-foreground">{displayInvoices.length} invoices</p>
         </div>
       </div>
 

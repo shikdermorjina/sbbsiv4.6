@@ -31,17 +31,6 @@ const activityIcons: Record<string, { icon: React.ElementType; color: string }> 
   online_order: { icon: ShoppingCart, color: 'text-yellow-600 bg-yellow-50' },
 };
 
-const quickActions = [
-  { label: 'New Sale', href: '/sales', icon: ShoppingCart, bg: 'bg-blue-500', ring: 'ring-blue-200' },
-  { label: 'New Purchase', href: '/purchases', icon: ShoppingBag, bg: 'bg-emerald-500', ring: 'ring-emerald-200' },
-  { label: 'New Quotation', href: '/quotations', icon: FileText, bg: 'bg-orange-500', ring: 'ring-orange-200' },
-  { label: 'New Customer', href: '/crm', icon: Users, bg: 'bg-teal-500', ring: 'ring-teal-200' },
-  { label: 'New Delivery', href: '/delivery', icon: Truck, bg: 'bg-purple-500', ring: 'ring-purple-200' },
-  { label: 'New Expense', href: '/accounting', icon: CreditCard, bg: 'bg-rose-500', ring: 'ring-rose-200' },
-  { label: 'POS Sale', href: '/sales/pos', icon: Receipt, bg: 'bg-indigo-500', ring: 'ring-indigo-200' },
-  { label: 'Projects', href: '/projects', icon: FolderKanban, bg: 'bg-amber-500', ring: 'ring-amber-200' },
-];
-
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
@@ -213,25 +202,6 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
           <p className="text-muted-foreground text-sm mt-0.5">Welcome back, Admin!</p>
-        </div>
-      </div>
-
-      {/* Quick Actions — horizontal strip */}
-      <div className="bg-white rounded-xl border border-border shadow-sm p-4">
-        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-3">Quick Actions</p>
-        <div className="grid grid-cols-4 sm:grid-cols-8 gap-3">
-          {quickActions.map((action) => (
-            <Link
-              key={action.label}
-              href={action.href}
-              className="group flex flex-col items-center gap-2"
-            >
-              <div className={`w-12 h-12 rounded-2xl ${action.bg} ring-4 ${action.ring} ring-offset-1 flex items-center justify-center shadow-sm group-hover:scale-110 group-hover:shadow-md transition-all duration-200`}>
-                <action.icon className="w-5 h-5 text-white" />
-              </div>
-              <span className="text-[11px] font-medium text-muted-foreground group-hover:text-foreground transition-colors text-center leading-tight">{action.label}</span>
-            </Link>
-          ))}
         </div>
       </div>
 

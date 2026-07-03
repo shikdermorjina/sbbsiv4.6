@@ -7,6 +7,7 @@ import { toast } from '@/hooks/use-toast';
 import { Plus, Search, Eye, Send, X, Trash2, FileText, ArrowRight, UserPlus, CreditCard, DollarSign, CircleCheck as CheckCircle, Printer, Share2, MessageCircle, Mail, Filter, ChevronDown } from 'lucide-react';
 import type { Quotation, QuotationStatus, Customer, Product } from '@/lib/types';
 import ProductSearchInput from '@/components/ui/ProductSearchInput';
+import ProductFilterDropdown from '@/components/ui/ProductFilterDropdown';
 import PrintTemplate from '@/components/PrintTemplate';
 
 const statusConfig: Record<QuotationStatus, { label: string; color: string; bg: string }> = {
@@ -35,6 +36,7 @@ export default function QuotationsPage() {
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [productFilteredIds, setProductFilteredIds] = useState<Set<string> | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [viewingQuotation, setViewingQuotation] = useState<QuotationWithCustomer | null>(null);
   const [quotationItems, setQuotationItems] = useState<any[]>([]);
@@ -98,25 +100,25 @@ export default function QuotationsPage() {
     return true;
   });
 
-  // Filter by product (requires async check)
-  const [productFilteredQuotations, setProductFilteredQuotations] = useState<QuotationWithCustomer[]>([]);
-
+  // Fetch product-filtered quotation IDs when filterProduct changes
   useEffect(() => {
-    async function filterByProduct() {
-      if (!filterProduct) {
-        setProductFilteredQuotations(filtered);
-        return;
-      }
-      const { data: quoteItems } = await supabase
-        .from('quotation_items')
-        .select('quotation_id')
-        .eq('product_id', filterProduct);
-
-      const quoteIds = new Set((quoteItems || []).map((item: any) => item.quotation_id));
-      setProductFilteredQuotations(filtered.filter(q => quoteIds.has(q.id)));
+    if (!filterProduct) {
+      setProductFilteredIds(null);
+      return;
     }
-    filterByProduct();
-  }, [filterProduct, filtered]);
+    supabase
+      .from('quotation_items')
+      .select('quotation_id')
+      .eq('product_id', filterProduct)
+      .then(({ data }) => {
+        setProductFilteredIds(new Set((data || []).map((item: any) => item.quotation_id)));
+      });
+  }, [filterProduct]);
+
+  // Apply product filter to filtered results
+  const displayQuotations = productFilteredIds === null
+    ? filtered
+    : filtered.filter(q => productFilteredIds.has(q.id));
 
   const stats = {
     total: quotations.length,
@@ -177,10 +179,11 @@ export default function QuotationsPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-border">
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Product</label>
-              <select value={filterProduct} onChange={e => setFilterProduct(e.target.value)} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none">
-                <option value="">All Products</option>
-                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              <ProductFilterDropdown
+                value={filterProduct}
+                onChange={setFilterProduct}
+                placeholder="All Products"
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Customer</label>
@@ -253,9 +256,9 @@ export default function QuotationsPage() {
             <tbody className="divide-y divide-border">
               {loading ? Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i}>{Array.from({ length: 7 }).map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-muted rounded animate-pulse" /></td>)}</tr>
-              )) : productFilteredQuotations.length === 0 ? (
+              )) : displayQuotations.length === 0 ? (
                 <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground text-sm">No quotations found</td></tr>
-              ) : productFilteredQuotations.map((q) => {
+              ) : displayQuotations.map((q) => {
                 const cfg = statusConfig[q.status as QuotationStatus] || statusConfig.draft;
                 return (
                   <tr key={q.id} className="hover:bg-muted/30 transition-colors">

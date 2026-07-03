@@ -14,6 +14,10 @@ interface NavItem {
   children?: { title: string; href: string }[];
 }
 
+interface SidebarProps {
+  collapsed?: boolean;
+}
+
 const navItems: NavItem[] = [
   { title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { title: 'Guide', href: '/guide', icon: BookOpen },
@@ -83,7 +87,7 @@ const navItems: NavItem[] = [
   { title: 'Settings', href: '/settings', icon: Settings },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ collapsed }: SidebarProps) {
   const pathname = usePathname();
   const [openMenus, setOpenMenus] = useState<string[]>(['Inventory', 'Sales', 'Purchases', 'CRM']);
 
@@ -103,44 +107,48 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-[220px] min-h-screen flex flex-col sidebar-bg text-white shrink-0">
+    <aside className={`min-h-screen flex flex-col sidebar-bg text-white shrink-0 transition-all duration-300 ${collapsed ? 'w-[60px]' : 'w-[220px]'}`}>
       {/* Logo */}
-      <div className="flex items-center gap-2.5 px-4 py-4 border-b border-white/10">
+      <div className={`flex items-center gap-2.5 px-4 py-4 border-b border-white/10 ${collapsed ? 'justify-center px-2' : ''}`}>
         <div className="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center shrink-0">
           <Building2 className="w-4.5 h-4.5 text-white" />
         </div>
-        <div className="min-w-0">
-          <div className="text-white font-bold text-sm leading-tight truncate">SI Building</div>
-          <div className="text-blue-300 text-[10px] font-medium">Solutions ERP</div>
-        </div>
+        {!collapsed && (
+          <div className="min-w-0">
+            <div className="text-white font-bold text-sm leading-tight truncate">SI Building</div>
+            <div className="text-blue-300 text-[10px] font-medium">Solutions ERP</div>
+          </div>
+        )}
       </div>
 
       {/* Nav */}
       <nav className="flex-1 py-3 overflow-y-auto sidebar-scroll px-2 space-y-0.5">
         {navItems.map((item) => {
           if (item.children) {
-            const open = openMenus.includes(item.title);
+            const open = openMenus.includes(item.title) && !collapsed;
             const parentActive = isParentActive(item);
             return (
-              <div key={item.title}>
+              <div key={item.title} className="relative group">
                 <button
-                  onClick={() => toggleMenu(item.title)}
+                  onClick={() => !collapsed && toggleMenu(item.title)}
+                  title={collapsed ? item.title : undefined}
                   className={cn(
                     'w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-colors text-[13px] font-medium',
+                    collapsed ? 'justify-center' : '',
                     parentActive
                       ? 'text-white bg-white/10'
                       : 'text-slate-400 hover:text-white hover:bg-white/5'
                   )}
                 >
                   <item.icon className="w-4 h-4 shrink-0" />
-                  <span className="flex-1 truncate">{item.title}</span>
-                  {open ? (
+                  {!collapsed && <span className="flex-1 truncate">{item.title}</span>}
+                  {!collapsed && (open ? (
                     <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
                   ) : (
                     <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                  )}
+                  ))}
                 </button>
-                {open && (
+                {open && !collapsed && (
                   <div className="ml-7 mt-0.5 space-y-0.5 border-l border-white/10 pl-3">
                     {item.children.map((child) => (
                       <Link
@@ -158,6 +166,26 @@ export default function Sidebar() {
                     ))}
                   </div>
                 )}
+                {/* Collapsed submenu popup */}
+                {collapsed && (
+                  <div className="absolute left-full top-0 hidden group-hover:block z-50 ml-1 bg-slate-800 rounded-lg shadow-xl py-1 min-w-[160px]">
+                    <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400 uppercase border-b border-slate-700">{item.title}</div>
+                    {item.children.map((child) => (
+                      <Link
+                        key={child.href}
+                        href={child.href}
+                        className={cn(
+                          'block px-3 py-2 text-[12px] transition-colors truncate',
+                          isActive(child.href)
+                            ? 'text-white font-semibold bg-blue-600'
+                            : 'text-slate-300 hover:text-white hover:bg-slate-700'
+                        )}
+                      >
+                        {child.title}
+                      </Link>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           }
@@ -166,16 +194,18 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href!}
+              title={collapsed ? item.title : undefined}
               className={cn(
                 'flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-colors text-[13px] font-medium',
+                collapsed ? 'justify-center' : '',
                 isActive(item.href!)
                   ? 'text-white bg-blue-600'
                   : 'text-slate-400 hover:text-white hover:bg-white/5'
               )}
             >
               <item.icon className="w-4 h-4 shrink-0" />
-              <span className="flex-1 truncate">{item.title}</span>
-              {item.badge && (
+              {!collapsed && <span className="flex-1 truncate">{item.title}</span>}
+              {!collapsed && item.badge && (
                 <span className="bg-blue-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
                   {item.badge}
                 </span>
@@ -186,20 +216,22 @@ export default function Sidebar() {
       </nav>
 
       {/* Bottom promo */}
-      <div className="p-3 border-t border-white/10">
-        <div className="bg-blue-600/20 rounded-xl p-3 text-center">
-          <p className="text-white text-[11px] font-semibold mb-0.5">Build More. Manage Better.</p>
-          <p className="text-blue-300 text-[10px] leading-snug mb-2">
-            Complete solution for your building materials business.
-          </p>
-          <Link
-            href="/online-store"
-            className="block bg-blue-500 hover:bg-blue-400 text-white text-[10px] font-semibold py-1.5 rounded-lg transition"
-          >
-            Go to Product Catalog →
-          </Link>
+      {!collapsed && (
+        <div className="p-3 border-t border-white/10">
+          <div className="bg-blue-600/20 rounded-xl p-3 text-center">
+            <p className="text-white text-[11px] font-semibold mb-0.5">Build More. Manage Better.</p>
+            <p className="text-blue-300 text-[10px] leading-snug mb-2">
+              Complete solution for your building materials business.
+            </p>
+            <Link
+              href="/online-store"
+              className="block bg-blue-500 hover:bg-blue-400 text-white text-[10px] font-semibold py-1.5 rounded-lg transition"
+            >
+              Go to Product Catalog
+            </Link>
+          </div>
         </div>
-      </div>
+      )}
     </aside>
   );
 }
