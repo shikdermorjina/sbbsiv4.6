@@ -230,7 +230,6 @@ function TransferModal({ products, warehouses, inventory, getAvailableStock, onC
   const [error, setError] = useState('');
   const [availableQty, setAvailableQty] = useState(0);
   const [productSearch, setProductSearch] = useState('');
-  const [showProductList, setShowProductList] = useState(false);
 
   useEffect(() => {
     if (form.product_id && form.from_warehouse_id) {
@@ -238,88 +237,63 @@ function TransferModal({ products, warehouses, inventory, getAvailableStock, onC
     }
   }, [form.product_id, form.from_warehouse_id, getAvailableStock]);
 
+  const selectedProduct = products.find(p => p.id === form.product_id);
+
+  const visibleProducts = (() => {
+    const q = productSearch.toLowerCase();
+    const fromWarehouseId = form.from_warehouse_id;
+    const base = fromWarehouseId
+      ? products.filter(p => (inventory.find(i => i.product_id === p.id && i.warehouse_id === fromWarehouseId)?.quantity_on_hand || 0) > 0)
+      : products;
+    const result = base.filter(p =>
+      !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
+    );
+    return result.length > 0 ? result : products.filter(p =>
+      !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
+    );
+  })();
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-
-    if (form.from_warehouse_id === form.to_warehouse_id) {
-      setError('Source and destination warehouses cannot be the same');
-      return;
-    }
-
+    if (form.from_warehouse_id === form.to_warehouse_id) { setError('Source and destination warehouses cannot be the same'); return; }
     const qty = Number(form.quantity);
-    if (qty <= 0) {
-      setError('Quantity must be greater than 0');
-      return;
-    }
-
-    if (qty > availableQty) {
-      setError(`Insufficient stock. Available: ${availableQty}`);
-      return;
-    }
+    if (qty <= 0) { setError('Quantity must be greater than 0'); return; }
+    if (qty > availableQty) { setError(`Insufficient stock. Available: ${availableQty}`); return; }
 
     setSaving(true);
-
     try {
       const transferId = crypto.randomUUID();
       const transferNumber = `TRF-${Date.now().toString().slice(-6)}`;
       const product = products.find(p => p.id === form.product_id);
 
-      // Create stock movement for transfer out
       const { error: outError } = await supabase.from('stock_movements').insert({
         tenant_id: '00000000-0000-0000-0000-000000000001',
-        product_id: form.product_id,
-        warehouse_id: form.from_warehouse_id,
-        movement_type: 'transfer_out',
-        quantity: -qty,
-        unit_cost: product?.cost_price || 0,
-        reference_type: 'transfer',
-        reference_id: transferId,
-        reference_number: transferNumber,
+        product_id: form.product_id, warehouse_id: form.from_warehouse_id,
+        movement_type: 'transfer_out', quantity: -qty, unit_cost: product?.cost_price || 0,
+        reference_type: 'transfer', reference_id: transferId, reference_number: transferNumber,
         notes: form.notes || `Transfer to ${warehouses.find(w => w.id === form.to_warehouse_id)?.name}`,
       });
-
       if (outError) throw outError;
 
-      // Create stock movement for transfer in
       const { error: inError } = await supabase.from('stock_movements').insert({
         tenant_id: '00000000-0000-0000-0000-000000000001',
-        product_id: form.product_id,
-        warehouse_id: form.to_warehouse_id,
-        movement_type: 'transfer_in',
-        quantity: qty,
-        unit_cost: product?.cost_price || 0,
-        reference_type: 'transfer',
-        reference_id: transferId,
-        reference_number: transferNumber,
+        product_id: form.product_id, warehouse_id: form.to_warehouse_id,
+        movement_type: 'transfer_in', quantity: qty, unit_cost: product?.cost_price || 0,
+        reference_type: 'transfer', reference_id: transferId, reference_number: transferNumber,
         notes: form.notes || `Transfer from ${warehouses.find(w => w.id === form.from_warehouse_id)?.name}`,
       });
-
       if (inError) throw inError;
 
-      // Update source warehouse inventory
       const sourceItem = inventory.find(i => i.product_id === form.product_id && i.warehouse_id === form.from_warehouse_id);
       if (sourceItem) {
-        await supabase.from('inventory_items').update({
-          quantity_on_hand: sourceItem.quantity_on_hand - qty,
-          updated_at: new Date().toISOString(),
-        }).eq('id', sourceItem.id);
+        await supabase.from('inventory_items').update({ quantity_on_hand: sourceItem.quantity_on_hand - qty, updated_at: new Date().toISOString() }).eq('id', sourceItem.id);
       }
-
-      // Update destination warehouse inventory
       const destItem = inventory.find(i => i.product_id === form.product_id && i.warehouse_id === form.to_warehouse_id);
       if (destItem) {
-        await supabase.from('inventory_items').update({
-          quantity_on_hand: destItem.quantity_on_hand + qty,
-          updated_at: new Date().toISOString(),
-        }).eq('id', destItem.id);
+        await supabase.from('inventory_items').update({ quantity_on_hand: destItem.quantity_on_hand + qty, updated_at: new Date().toISOString() }).eq('id', destItem.id);
       } else {
-        await supabase.from('inventory_items').insert({
-          tenant_id: '00000000-0000-0000-0000-000000000001',
-          product_id: form.product_id,
-          warehouse_id: form.to_warehouse_id,
-          quantity_on_hand: qty,
-        });
+        await supabase.from('inventory_items').insert({ tenant_id: '00000000-0000-0000-0000-000000000001', product_id: form.product_id, warehouse_id: form.to_warehouse_id, quantity_on_hand: qty });
       }
 
       toast({ title: 'Success', description: 'Stock transfer completed successfully' });
@@ -334,174 +308,134 @@ function TransferModal({ products, warehouses, inventory, getAvailableStock, onC
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl max-h-[92vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <h2 className="text-base font-bold">New Stock Transfer</h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
 
-          <div className="relative">
-            <label className="block text-xs font-medium mb-1">Product *</label>
-            {form.product_id && !showProductList ? (
-              <div className="flex items-center gap-2 w-full border border-blue-400 bg-blue-50 rounded-lg px-3 py-2 text-sm">
-                <span className="flex-1 font-medium text-foreground truncate">
-                  {products.find(p => p.id === form.product_id)?.name}
-                  <span className="ml-1 text-xs text-muted-foreground font-normal">({products.find(p => p.id === form.product_id)?.sku})</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => { setForm({ ...form, product_id: '' }); setProductSearch(''); setShowProductList(true); }}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
+        <div className="overflow-y-auto flex-1">
+          <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+
+            {/* Warehouses first */}
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <input
-                  autoFocus
-                  type="text"
-                  placeholder="Type to search products by name or SKU..."
-                  value={productSearch}
-                  onChange={e => { setProductSearch(e.target.value); setShowProductList(true); }}
-                  onFocus={() => setShowProductList(true)}
+                <label className="block text-xs font-medium mb-1">From Warehouse *</label>
+                <select required value={form.from_warehouse_id}
+                  onChange={e => setForm({ ...form, from_warehouse_id: e.target.value, product_id: '' })}
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-                {showProductList && (
-                  <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-border rounded-xl shadow-xl max-h-52 overflow-y-auto">
-                    {(() => {
-                      const q = productSearch.toLowerCase();
-                      const fromWarehouseId = form.from_warehouse_id;
-                      // If a from_warehouse is selected, show products with stock there first; otherwise show all
-                      const withStock = fromWarehouseId
-                        ? products.filter(p => (inventory.find(i => i.product_id === p.id && i.warehouse_id === fromWarehouseId)?.quantity_on_hand || 0) > 0)
-                        : products;
-                      const filtered = withStock.filter(p =>
-                        !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
-                      );
-                      if (filtered.length === 0) {
-                        // Fall back to all products if none found with stock
-                        const fallback = products.filter(p =>
-                          !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
-                        );
-                        if (fallback.length === 0) return (
-                          <div className="px-4 py-3 text-sm text-muted-foreground">No products found for &ldquo;{productSearch}&rdquo;</div>
-                        );
-                        return fallback.map(p => (
-                          <button key={p.id} type="button"
-                            onClick={() => { setForm({ ...form, product_id: p.id }); setProductSearch(''); setShowProductList(false); }}
-                            className="w-full flex items-start gap-3 px-3 py-2.5 hover:bg-blue-50 text-left border-b border-border/50 last:border-0 transition"
-                          >
-                            <Package className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
-                              <p className="text-xs text-muted-foreground">{p.sku}</p>
-                            </div>
-                          </button>
-                        ));
-                      }
-                      return filtered.map(p => {
-                        const stock = fromWarehouseId ? (inventory.find(i => i.product_id === p.id && i.warehouse_id === fromWarehouseId)?.quantity_on_hand || 0) : null;
-                        return (
-                          <button key={p.id} type="button"
-                            onClick={() => { setForm({ ...form, product_id: p.id }); setProductSearch(''); setShowProductList(false); }}
-                            className="w-full flex items-start gap-3 px-3 py-2.5 hover:bg-blue-50 text-left border-b border-border/50 last:border-0 transition"
-                          >
-                            <Package className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
-                              <p className="text-xs text-muted-foreground">{p.sku}</p>
-                            </div>
-                            {stock !== null && (
-                              <span className={`text-xs font-semibold shrink-0 ${stock > 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                {stock} in stock
-                              </span>
-                            )}
-                          </button>
-                        );
-                      });
-                    })()}
+                >
+                  <option value="">Select source</option>
+                  {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">To Warehouse *</label>
+                <select required value={form.to_warehouse_id}
+                  onChange={e => setForm({ ...form, to_warehouse_id: e.target.value })}
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  <option value="">Select destination</option>
+                  {warehouses.filter(w => w.id !== form.from_warehouse_id).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {/* Product selection - always visible list */}
+            <div>
+              <label className="block text-xs font-medium mb-1">
+                Product *{form.from_warehouse_id ? <span className="text-muted-foreground font-normal ml-1">(showing products in selected warehouse)</span> : ''}
+              </label>
+
+              {selectedProduct ? (
+                <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <Package className="w-4 h-4 text-blue-600 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{selectedProduct.name}</p>
+                    <p className="text-xs text-muted-foreground">{selectedProduct.sku}</p>
                   </div>
-                )}
-              </div>
+                  {form.from_warehouse_id && (
+                    <span className="text-xs font-bold text-green-600 shrink-0">{availableQty} available</span>
+                  )}
+                  <button type="button" onClick={() => setForm({ ...form, product_id: '', quantity: '' })} className="text-muted-foreground hover:text-foreground ml-1">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="border border-border rounded-xl overflow-hidden">
+                  <div className="relative border-b border-border">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                    <input
+                      type="text"
+                      placeholder="Search by product name or SKU..."
+                      value={productSearch}
+                      onChange={e => setProductSearch(e.target.value)}
+                      className="w-full pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:bg-blue-50/50"
+                    />
+                  </div>
+                  <div className="max-h-52 overflow-y-auto divide-y divide-border/50">
+                    {visibleProducts.length === 0 ? (
+                      <div className="px-4 py-6 text-center text-sm text-muted-foreground">No products found</div>
+                    ) : visibleProducts.map(p => {
+                      const stock = form.from_warehouse_id
+                        ? (inventory.find(i => i.product_id === p.id && i.warehouse_id === form.from_warehouse_id)?.quantity_on_hand || 0)
+                        : null;
+                      return (
+                        <button key={p.id} type="button"
+                          onClick={() => setForm({ ...form, product_id: p.id, quantity: '' })}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-blue-50 text-left transition"
+                        >
+                          <div className="w-7 h-7 bg-muted rounded-lg flex items-center justify-center shrink-0">
+                            <Package className="w-3.5 h-3.5 text-muted-foreground" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">{p.name}</p>
+                            <p className="text-xs text-muted-foreground">{p.sku}</p>
+                          </div>
+                          {stock !== null && (
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${stock > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'}`}>
+                              {stock > 0 ? `${stock} in stock` : 'No stock'}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              <input type="text" required value={form.product_id} onChange={() => {}} className="sr-only" />
+            </div>
+
+            {/* Quantity + Notes (shown after product selected) */}
+            {form.product_id && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Quantity to Transfer *</label>
+                  <input type="number" required min="1" max={availableQty || undefined}
+                    value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })}
+                    placeholder={`Max: ${availableQty}`}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Notes</label>
+                  <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })}
+                    rows={2} placeholder="Optional notes..."
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+              </>
             )}
-            {/* Hidden input for form validation */}
-            <input type="text" required value={form.product_id} onChange={() => {}} className="sr-only" />
-          </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium mb-1">From Warehouse *</label>
-              <select
-                required
-                value={form.from_warehouse_id}
-                onChange={e => setForm({ ...form, from_warehouse_id: e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              >
-                <option value="">Select source</option>
-                {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select>
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted transition">Cancel</button>
+              <button type="submit" disabled={saving || !form.product_id} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60">
+                {saving ? 'Processing...' : <><ArrowRight className="w-4 h-4" />Transfer Stock</>}
+              </button>
             </div>
-            <div>
-              <label className="block text-xs font-medium mb-1">To Warehouse *</label>
-              <select
-                required
-                value={form.to_warehouse_id}
-                onChange={e => setForm({ ...form, to_warehouse_id: e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              >
-                <option value="">Select destination</option>
-                {warehouses.filter(w => w.id !== form.from_warehouse_id).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-              </select>
-            </div>
-          </div>
-
-          {form.product_id && form.from_warehouse_id && (
-            <div className="p-3 bg-muted/50 rounded-lg">
-              <div className="flex items-center gap-2 text-sm">
-                <Package className="w-4 h-4 text-muted-foreground" />
-                <span className="text-muted-foreground">Available Stock:</span>
-                <span className="font-bold text-foreground">{availableQty}</span>
-              </div>
-            </div>
-          )}
-
-          <div>
-            <label className="block text-xs font-medium mb-1">Quantity *</label>
-            <input
-              type="number"
-              required
-              min="1"
-              max={availableQty || undefined}
-              value={form.quantity}
-              onChange={e => setForm({ ...form, quantity: e.target.value })}
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium mb-1">Notes</label>
-            <textarea
-              value={form.notes}
-              onChange={e => setForm({ ...form, notes: e.target.value })}
-              rows={2}
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-              placeholder="Optional notes..."
-            />
-          </div>
-
-          <div className="flex items-center justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted transition">Cancel</button>
-            <button type="submit" disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60">
-              {saving ? 'Processing...' : <>
-                <ArrowRight className="w-4 h-4" />
-                Transfer Stock
-              </>}
-            </button>
-          </div>
-        </form>
+          </form>
+        </div>
       </div>
     </div>
   );

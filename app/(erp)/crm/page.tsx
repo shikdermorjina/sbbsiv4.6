@@ -21,6 +21,7 @@ const typeConfig: Record<CustomerType, { label: string; color: string; icon: Rea
 export default function CRMPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerReturns, setCustomerReturns] = useState<Record<string, { count: number; total: number }>>({});
+  const [customerPurchases, setCustomerPurchases] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
@@ -33,8 +34,20 @@ export default function CRMPage() {
 
   async function loadData() {
     setLoading(true);
-    const { data } = await supabase.from('customers').select('*').order('total_purchases', { ascending: false });
-    const { data: returnsData } = await supabase.from('sales_returns').select('customer_id, total_refund_amount');
+    const [{ data }, { data: invoiceData }, { data: returnsData }] = await Promise.all([
+      supabase.from('customers').select('*').order('name'),
+      supabase.from('invoices').select('customer_id, total_amount'),
+      supabase.from('sales_returns').select('customer_id, total_refund_amount'),
+    ]);
+
+    // Build purchases map from actual invoices
+    const purchasesMap: Record<string, number> = {};
+    (invoiceData || []).forEach(inv => {
+      if (!inv.customer_id) return;
+      purchasesMap[inv.customer_id] = (purchasesMap[inv.customer_id] || 0) + Number(inv.total_amount);
+    });
+    setCustomerPurchases(purchasesMap);
+
     setCustomers(data || []);
     const returnsMap: Record<string, { count: number; total: number }> = {};
     (returnsData || []).forEach(r => {
@@ -44,7 +57,7 @@ export default function CRMPage() {
       returnsMap[r.customer_id].total += Number(r.total_refund_amount) || 0;
     });
     setCustomerReturns(returnsMap);
-    const totalRev = (data || []).reduce((s: number, c: Customer) => s + c.total_purchases, 0);
+    const totalRev = Object.values(purchasesMap).reduce((s, v) => s + v, 0);
     const totalOut = (data || []).reduce((s: number, c: Customer) => s + c.outstanding_balance, 0);
     const totalRef = (returnsData || []).reduce((s: number, r) => s + (Number(r.total_refund_amount) || 0), 0);
     setStats({ total: data?.length || 0, totalRevenue: totalRev, outstanding: totalOut, active: data?.filter((c: Customer) => c.is_active).length || 0, totalRefunds: totalRef });
@@ -131,7 +144,8 @@ export default function CRMPage() {
               ) : filtered.map(c => {
                 const cfg = typeConfig[c.type] || typeConfig.retail;
                 const returns = customerReturns[c.id] || { count: 0, total: 0 };
-                const netPurchases = c.total_purchases - returns.total;
+                const totalPurchases = customerPurchases[c.id] || 0;
+                const netPurchases = totalPurchases - returns.total;
                 return (
                   <tr key={c.id} className={`hover:bg-muted/30 transition-colors ${!c.is_active ? 'opacity-50' : ''}`}>
                     <td className="px-4 py-3">
@@ -151,7 +165,7 @@ export default function CRMPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-sm text-foreground">{c.city || '-'}</td>
-                    <td className="px-4 py-3 text-right text-sm font-semibold text-foreground">{formatCurrency(c.total_purchases)}</td>
+                    <td className="px-4 py-3 text-right text-sm font-semibold text-foreground">{formatCurrency(totalPurchases)}</td>
                     <td className="px-4 py-3 text-right">
                       {returns.count > 0 ? (
                         <div className="flex items-center justify-end gap-1">

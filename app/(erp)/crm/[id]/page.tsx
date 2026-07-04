@@ -81,8 +81,9 @@ export default function CustomerDetailPage() {
     }
     setCustomer(custData);
 
-    const [invRes, quoteRes, delivRes, receivableRes, receivablePaymentsRes, returnsRes] = await Promise.all([
+    const [invRes, invTotalsRes, quoteRes, delivRes, receivableRes, receivablePaymentsRes, returnsRes] = await Promise.all([
       supabase.from('invoices').select('*').eq('customer_id', customerId).order('created_at', { ascending: false }).limit(20),
+      supabase.from('invoices').select('total_amount').eq('customer_id', customerId),
       supabase.from('quotations').select('*').eq('customer_id', customerId).order('created_at', { ascending: false }).limit(10),
       supabase.from('deliveries').select('*').eq('customer_id', customerId).order('created_at', { ascending: false }).limit(10),
       supabase.from('journal_entries').select('id, entry_number, entry_date, description, total_debit, created_at').eq('customer_id', customerId).eq('reference_type', 'receivable').eq('is_posted', true).order('entry_date', { ascending: false }),
@@ -119,13 +120,14 @@ export default function CustomerDetailPage() {
     const totalOut = invData.reduce((s, i) => s + Number(i.balance_due || i.total_amount - i.amount_paid), 0);
     const manualReceivablesOutstanding = receivablesWithPayments.reduce((s, r) => s + r.outstanding_balance, 0);
     const totalRefunds = returnsData.reduce((s, r) => s + Number(r.total_refund_amount), 0);
-    const netPurchases = Number(custData.total_purchases) - totalRefunds;
+    const actualTotalPurchases = (invTotalsRes.data || []).reduce((s, i) => s + Number(i.total_amount), 0);
+    const netPurchases = actualTotalPurchases - totalRefunds;
 
     setStats({
-      totalInvoices: invData.length,
+      totalInvoices: (invTotalsRes.data || []).length,
       totalPaid,
       totalOutstanding: totalOut,
-      totalPurchases: custData.total_purchases,
+      totalPurchases: actualTotalPurchases,
       totalRefunds,
       netPurchases,
       activeDeliveries: (delivRes.data || []).filter(d => d.status !== 'delivered' && d.status !== 'returned').length,
