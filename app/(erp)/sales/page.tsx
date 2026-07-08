@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCheck as CheckCircle2, CircleAlert as AlertCircle, Printer, DollarSign, Send, CreditCard, UserPlus, RotateCcw, Package, Filter, ChevronDown } from 'lucide-react';
+import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCheck as CheckCircle2, Printer, DollarSign, Send, CreditCard, UserPlus, RotateCcw, Package, Filter, ChevronDown } from 'lucide-react';
 import type { Invoice, InvoiceStatus, Customer, Product, Payment, PaymentMethod, ProductUnit } from '@/lib/types';
 import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
 import ProductSearchInput from '@/components/ui/ProductSearchInput';
@@ -56,7 +56,7 @@ export default function SalesPage() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [productFilteredIds, setProductFilteredIds] = useState<Set<string> | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
-  const [stats, setStats] = useState({ total: 0, paid: 0, outstanding: 0, overdue: 0 });
+  const [stats, setStats] = useState({ total: 0, paid: 0, refunded: 0, netCollected: 0, outstanding: 0, overdue: 0 });
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [viewingInvoice, setViewingInvoice] = useState<InvoiceWithCustomer | null>(null);
   const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
@@ -108,9 +108,16 @@ export default function SalesPage() {
     if (settingsRes.data?.setting_value) setCompanySettings(settingsRes.data.setting_value);
 
     const allInv = invoicesWithReturns;
+    const totalRefunded = allInv.reduce((s: number, i: any) => {
+      const refunds = (i.sales_returns || []).reduce((rs: number, r: any) => rs + Number(r.total_refund_amount), 0);
+      return s + refunds;
+    }, 0);
+    const totalCollected = allInv.reduce((s: number, i: any) => s + Number(i.amount_paid), 0);
     setStats({
       total: allInv.reduce((s: number, i: any) => s + Number(i.total_amount), 0),
-      paid: allInv.filter((i: any) => i.status === 'paid').reduce((s: number, i: any) => s + Number(i.total_amount), 0),
+      paid: totalCollected,
+      refunded: totalRefunded,
+      netCollected: totalCollected - totalRefunded,
       outstanding: allInv.reduce((s: number, i: any) => s + Number(i.balance_due || 0), 0),
       overdue: allInv.filter((i: any) => i.status === 'overdue').length,
     });
@@ -307,12 +314,13 @@ export default function SalesPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         {[
           { label: 'Total Sales', value: formatCurrency(stats.total), icon: TrendingUp, color: 'text-blue-500 bg-blue-50' },
           { label: 'Collected', value: formatCurrency(stats.paid), icon: CheckCircle2, color: 'text-green-500 bg-green-50' },
+          { label: 'Refunded', value: formatCurrency(stats.refunded), icon: RotateCcw, color: 'text-purple-500 bg-purple-50' },
+          { label: 'Net Collected', value: formatCurrency(stats.netCollected), icon: DollarSign, color: 'text-teal-500 bg-teal-50' },
           { label: 'Outstanding', value: formatCurrency(stats.outstanding), icon: Clock, color: 'text-amber-500 bg-amber-50' },
-          { label: 'Overdue Invoices', value: stats.overdue, icon: AlertCircle, color: 'text-red-500 bg-red-50' },
         ].map(s => (
           <div key={s.label} className="stat-card flex items-center gap-3">
             <div className={`w-10 h-10 rounded-full flex items-center justify-center ${s.color}`}><s.icon className="w-5 h-5" /></div>
