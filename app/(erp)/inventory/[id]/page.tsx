@@ -71,23 +71,25 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       .from('invoice_items')
       .select(`
         id, quantity, unit_price, discount_percent, subtotal, cost_price, base_quantity, unit_name,
-        created_at,
-        invoice:invoices!inner(invoice_number, invoice_date, status, customer:customers(name))
+        invoice:invoices!inner(invoice_number, invoice_date, status, created_at, customer:customers(name))
       `)
-      .eq('product_id', id)
-      .order('created_at', { ascending: false })
-      .limit(50);
+      .eq('product_id', id);
 
-    setSalesData(salesItems || []);
+    // Sort by invoice created_at descending
+    const sortedSalesItems = (salesItems || []).sort((a: any, b: any) =>
+      new Date((b.invoice as any)?.created_at || 0).getTime() - new Date((a.invoice as any)?.created_at || 0).getTime()
+    ).slice(0, 50);
 
-    const totalQty = (salesItems || []).reduce((s: number, i: any) => s + Number(i.quantity), 0);
-    const totalRevenue = (salesItems || []).reduce((s: number, i: any) => s + Number(i.subtotal), 0);
-    const totalCOGS = (salesItems || []).reduce((s: number, i: any) => s + Number(i.cost_price) * Number(i.quantity), 0);
+    setSalesData(sortedSalesItems || []);
+
+    const totalQty = (sortedSalesItems || []).reduce((s: number, i: any) => s + Number(i.quantity), 0);
+    const totalRevenue = (sortedSalesItems || []).reduce((s: number, i: any) => s + Number(i.subtotal), 0);
+    const totalCOGS = (sortedSalesItems || []).reduce((s: number, i: any) => s + Number(i.cost_price) * Number(i.quantity), 0);
     setSalesStats({
       totalQty,
       totalRevenue,
-      invoiceCount: new Set((salesItems || []).map((i: any) => i.invoice?.invoice_number)).size,
-      avgOrderValue: (salesItems || []).length > 0 ? totalRevenue / (salesItems || []).length : 0,
+      invoiceCount: new Set((sortedSalesItems || []).map((i: any) => i.invoice?.invoice_number)).size,
+      avgOrderValue: (sortedSalesItems || []).length > 0 ? totalRevenue / (sortedSalesItems || []).length : 0,
     });
     setFinanceStats(prev => ({
       ...prev,
@@ -95,7 +97,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       totalCOGS,
       grossProfit: totalRevenue - totalCOGS,
       margin: totalRevenue > 0 ? ((totalRevenue - totalCOGS) / totalRevenue) * 100 : 0,
-      avgSellPrice: (salesItems || []).length > 0 ? totalRevenue / (salesItems || []).reduce((s: number, i: any) => s + Number(i.quantity), 0) : 0,
+      avgSellPrice: (sortedSalesItems || []).length > 0 ? totalRevenue / (sortedSalesItems || []).reduce((s: number, i: any) => s + Number(i.quantity), 0) : 0,
     }));
 
     // Load purchase data
@@ -103,15 +105,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       .from('purchase_order_items')
       .select(`
         id, quantity, received_quantity, unit_cost, subtotal, unit_name,
-        purchase_order:purchase_orders!inner(po_number, order_date, status, supplier:suppliers(name))
+        purchase_order:purchase_orders!inner(po_number, order_date, status, created_at, supplier:suppliers(name))
       `)
-      .eq('product_id', id)
-      .order('created_at', { ascending: false })
-      .limit(50);
+      .eq('product_id', id);
 
-    setPurchaseData(purchaseItems || []);
-    const totalPurchased = (purchaseItems || []).reduce((s: number, i: any) => s + Number(i.received_quantity || i.quantity), 0);
-    const totalPurchaseCost = (purchaseItems || []).reduce((s: number, i: any) => s + Number(i.subtotal), 0);
+    const sortedPurchaseItems = (purchaseItems || []).sort((a: any, b: any) =>
+      new Date((b.purchase_order as any)?.created_at || 0).getTime() - new Date((a.purchase_order as any)?.created_at || 0).getTime()
+    ).slice(0, 50);
+
+    setPurchaseData(sortedPurchaseItems || []);
+    const totalPurchased = (sortedPurchaseItems || []).reduce((s: number, i: any) => s + Number(i.received_quantity || i.quantity), 0);
+    const totalPurchaseCost = (sortedPurchaseItems || []).reduce((s: number, i: any) => s + Number(i.subtotal), 0);
     setFinanceStats(prev => ({
       ...prev,
       totalPurchased,
@@ -148,12 +152,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       .from('delivery_items')
       .select(`
         id, quantity, delivered_quantity, unit_name,
-        delivery:deliveries!inner(delivery_number, delivery_date, status, customer:customers(name))
+        delivery:deliveries!inner(delivery_number, delivery_date, status, created_at, customer:customers(name))
       `)
-      .eq('product_id', id)
-      .order('created_at', { ascending: false })
-      .limit(50);
-    setDeliveryData(deliveryItems || []);
+      .eq('product_id', id);
+
+    const sortedDeliveryItems = (deliveryItems || []).sort((a: any, b: any) =>
+      new Date((b.delivery as any)?.created_at || 0).getTime() - new Date((a.delivery as any)?.created_at || 0).getTime()
+    ).slice(0, 50);
+    setDeliveryData(sortedDeliveryItems || []);
 
     setLoading(false);
   }
