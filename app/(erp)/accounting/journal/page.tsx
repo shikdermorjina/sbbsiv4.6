@@ -641,7 +641,8 @@ function JournalEntryModal({ accounts, onClose, onSaved }: { accounts: Account[]
     setSaving(true);
     try {
       const totalAmt = finalLines.reduce((s, l) => s + l.debit, 0);
-      const entryNumber = `JE-${Date.now().toString().slice(-7)}`;
+      const { data: jeNum } = await supabase.rpc('generate_journal_number');
+      const entryNumber = jeNum || `JE-${Date.now().toString().slice(-7)}`;
 
       const { data: entry, error: entryError } = await supabase
         .from('journal_entries')

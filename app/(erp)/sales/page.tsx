@@ -895,7 +895,8 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
     setSaving(true);
     setError('');
 
-    const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
+    const { data: invoiceNum } = await supabase.rpc('generate_invoice_number');
+    const invoiceNumber = invoiceNum || `INV-${Date.now().toString().slice(-6)}`;
     const totalAmount = subtotal;
 
     const { data: invoice, error: invError } = await supabase
@@ -936,7 +937,8 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
 
     // Record payment if full or partial
     if (amountPaid > 0) {
-      const paymentNumber = `PAY-${Date.now().toString().slice(-6)}`;
+      const { data: payNum } = await supabase.rpc('generate_payment_number');
+      const paymentNumber = payNum || `PAY-${Date.now().toString().slice(-6)}`;
       await supabase.from('payments').insert({
         payment_number: paymentNumber,
         payment_type: 'received',
@@ -1246,7 +1248,8 @@ function RecordPaymentModal({ invoice, onClose, onSaved }: { invoice: InvoiceWit
     setSaving(true);
     setError('');
 
-    const paymentNumber = `PAY-${Date.now().toString().slice(-6)}`;
+    const { data: payNum2 } = await supabase.rpc('generate_payment_number');
+    const paymentNumber = payNum2 || `PAY-${Date.now().toString().slice(-6)}`;
 
     const { error: payError } = await supabase.from('payments').insert({
       payment_number: paymentNumber,
@@ -1761,7 +1764,8 @@ function ConvertToDeliveryModal({ invoice, companySettings, onClose, onSaved }: 
     setSaving(true);
     setError('');
 
-    const deliveryNumber = `DLV-${Date.now().toString().slice(-6)}`;
+    const { data: dlvNum } = await supabase.rpc('generate_delivery_number');
+    const deliveryNumber = dlvNum || `DLV-${Date.now().toString().slice(-6)}`;
     const { data: savedData, error: insertError } = await supabase
       .from('deliveries')
       .insert({

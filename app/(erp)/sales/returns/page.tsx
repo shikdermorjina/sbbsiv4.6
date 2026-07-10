@@ -504,7 +504,8 @@ function ReturnModal({ invoices, onClose, onSaved }: {
       }
 
       // Create journal entry
-      const journalEntryNumber = `JE-${Date.now().toString().slice(-6)}`;
+      const { data: jeNum } = await supabase.rpc('generate_journal_number');
+      const journalEntryNumber = jeNum || `JE-${Date.now().toString().slice(-6)}`;
       const journalLines: any[] = [];
 
       // Line 1: Debit Sales Returns & Allowances (Revenue Reversal)
@@ -611,7 +612,8 @@ function ReturnModal({ invoices, onClose, onSaved }: {
       // Create payment record for the refund (only for non-store-credit refunds)
       let paymentId = null;
       if (!isStoreCredit) {
-        const paymentNumber = `PAY-${Date.now().toString().slice(-6)}`;
+        const { data: refPayNum } = await supabase.rpc('generate_payment_number');
+        const paymentNumber = refPayNum || `PAY-${Date.now().toString().slice(-6)}`;
         const { data: payment, error: paymentError } = await supabase
           .from('payments')
           .insert({

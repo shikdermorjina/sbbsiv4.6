@@ -412,7 +412,8 @@ function DeliveryModal({ customers, invoices, delivery, onClose, onSaved }: {
     setSaving(true);
     setError('');
 
-    const deliveryNumber = delivery?.delivery_number || `DLV-${Date.now().toString().slice(-6)}`;
+    const { data: dlvNum } = await supabase.rpc('generate_delivery_number');
+    const deliveryNumber = delivery?.delivery_number || dlvNum || `DLV-${Date.now().toString().slice(-6)}`;
     const data = {
       delivery_number: deliveryNumber,
       customer_id: form.customer_id || null,

@@ -357,7 +357,8 @@ function CreatePOModal({ suppliers, products, onClose, onSaved }: {
     setSaving(true);
     setError('');
 
-    const poNumber = `PO-${Date.now().toString().slice(-6)}`;
+    const { data: poNum } = await supabase.rpc('generate_purchase_order_number');
+    const poNumber = poNum || `PO-${Date.now().toString().slice(-6)}`;
 
     const { data: po, error: poError } = await supabase
       .from('purchase_orders')
@@ -390,7 +391,8 @@ function CreatePOModal({ suppliers, products, onClose, onSaved }: {
 
     // Record payment if full or partial
     if (amountPaid > 0) {
-      const paymentNumber = `POPAY-${Date.now().toString().slice(-6)}`;
+      const { data: poPayNum } = await supabase.rpc('generate_purchase_payment_number');
+      const paymentNumber = poPayNum || `POPAY-${Date.now().toString().slice(-6)}`;
       await supabase.from('payments').insert({
         payment_number: paymentNumber,
         payment_type: 'made',
@@ -770,7 +772,8 @@ function RecordPOPaymentModal({ order, onClose, onSaved }: { order: PurchaseOrde
     setSaving(true);
     setError('');
 
-    const paymentNumber = `POPAY-${Date.now().toString().slice(-6)}`;
+    const { data: poPayNum2 } = await supabase.rpc('generate_purchase_payment_number');
+    const paymentNumber = poPayNum2 || `POPAY-${Date.now().toString().slice(-6)}`;
 
     const { error: payError } = await supabase.from('payments').insert({
       payment_number: paymentNumber,

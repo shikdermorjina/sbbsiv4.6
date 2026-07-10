@@ -233,7 +233,8 @@ export default function POSPage() {
     setProcessing(true);
 
     try {
-      const invoiceNumber = `POS-${Date.now().toString().slice(-8)}`;
+      const { data: posNum } = await supabase.rpc('generate_pos_number');
+      const invoiceNumber = posNum || `POS-${Date.now().toString().slice(-8)}`;
       setLastInvoiceNumber(invoiceNumber);
 
       const customerId = selectedCustomer;
@@ -304,8 +305,9 @@ export default function POSPage() {
         }
 
         // Record store credit as a payment
+        const { data: scPayNum } = await supabase.rpc('generate_payment_number');
         const { error: creditPayError } = await supabase.from('payments').insert({
-          payment_number: `PAY-SC-${Date.now().toString().slice(-6)}`,
+          payment_number: `PAY-SC-${(scPayNum || '').replace('PAY-', '')}`,
           payment_type: 'received',
           reference_type: 'invoice',
           reference_id: invoice.id,
@@ -320,8 +322,9 @@ export default function POSPage() {
 
       // Record cash/card payment for the remaining amount
       if (cashToPay > 0) {
+        const { data: posPayNum } = await supabase.rpc('generate_payment_number');
         const { error: payError } = await supabase.from('payments').insert({
-          payment_number: `PAY-${Date.now().toString().slice(-6)}`,
+          payment_number: posPayNum || `PAY-${Date.now().toString().slice(-6)}`,
           payment_type: 'received',
           reference_type: 'invoice',
           reference_id: invoice.id,
