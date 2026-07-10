@@ -5,8 +5,10 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCheck as CheckCircle2, Printer, DollarSign, Send, CreditCard, UserPlus, RotateCcw, Package, Filter, ChevronDown, Wallet, CircleArrowDown as ArrowDownCircle, CircleArrowUp as ArrowUpCircle, Truck, Calendar, ExternalLink } from 'lucide-react';
+import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCheck as CheckCircle2, Printer, DollarSign, Send, CreditCard, UserPlus, RotateCcw, Package, Filter, ChevronDown, Wallet, CircleArrowDown as ArrowDownCircle, CircleArrowUp as ArrowUpCircle, Truck, Calendar, ExternalLink, Pencil, History } from 'lucide-react';
 import DeliveryChallan from '@/components/DeliveryChallan';
+import EditInvoiceModal from '@/components/EditInvoiceModal';
+import EditHistoryPanel from '@/components/EditHistoryPanel';
 import { useRouter } from 'next/navigation';
 import type { Invoice, InvoiceStatus, Customer, Product, Payment, PaymentMethod, ProductUnit } from '@/lib/types';
 import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
@@ -81,6 +83,8 @@ export default function SalesPage() {
   const [companySettings, setCompanySettings] = useState<any>({ name: '', address: '', phone: '', email: '', logo_url: '' });
   const [convertingInvoice, setConvertingInvoice] = useState<InvoiceWithCustomer | null>(null);
   const [viewingChallan, setViewingChallan] = useState<any>(null);
+  const [editingInvoice, setEditingInvoice] = useState<InvoiceWithCustomer | null>(null);
+  const [viewTab, setViewTab] = useState<'details' | 'history'>('details');
 
   useEffect(() => { loadData(); }, [period]);
 
@@ -224,6 +228,13 @@ export default function SalesPage() {
     setInvoiceItems(itemsRes.data || []);
     setInvoicePayments(paymentsRes.data || []);
     setViewingInvoice(invoice);
+    setViewTab('details');
+  }
+
+  function canEditInvoice(invoice: InvoiceWithCustomer): boolean {
+    if (invoice.is_pos) return false;
+    if (invoice.status === 'cancelled' || invoice.status === 'refunded' || invoice.status === 'paid') return false;
+    return true;
   }
 
   function ViewInvoiceModal({ invoice, items, payments, onClose, onRecordPayment, onUpdateStatus }: {
@@ -244,8 +255,22 @@ export default function SalesPage() {
 
           {/* Toolbar */}
           <div className="no-print flex items-center justify-between px-6 py-3 border-b border-border sticky top-0 bg-white z-10">
-            <span className="text-sm font-semibold text-muted-foreground">Invoice Preview</span>
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-semibold text-muted-foreground">Invoice Preview</span>
+              <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-0.5">
+                <button onClick={() => setViewTab('details')} className={`px-3 py-1 rounded-md text-xs font-medium transition ${viewTab === 'details' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>Details</button>
+                <button onClick={() => setViewTab('history')} className={`flex items-center gap-1 px-3 py-1 rounded-md text-xs font-medium transition ${viewTab === 'history' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                  <History className="w-3 h-3" />History
+                  {(invoice as any).edit_count > 0 && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full">{(invoice as any).edit_count}</span>}
+                </button>
+              </div>
+            </div>
             <div className="flex items-center gap-2">
+              {canEditInvoice(invoice) && (
+                <button onClick={() => { onClose(); setEditingInvoice(invoice); }} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition">
+                  <Pencil className="w-3.5 h-3.5" />Edit
+                </button>
+              )}
               <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
                 <Printer className="w-3.5 h-3.5" />Print / PDF
               </button>
@@ -253,7 +278,8 @@ export default function SalesPage() {
             </div>
           </div>
 
-          {/* Print body */}
+          {/* Print body — only visible on details tab */}
+          {viewTab === 'details' ? (
           <div className="p-8">
             <PrintTemplate
               docType="INVOICE"
@@ -296,7 +322,6 @@ export default function SalesPage() {
                 payment_method: p.payment_method,
               }))}
             />
-          </div>
 
           {/* Product links (hidden on print) */}
           <div className="no-print px-8 py-3 border-t border-border">
@@ -329,6 +354,12 @@ export default function SalesPage() {
                 </button>
               )}
             </div>
+          )}
+          </div>
+          ) : (
+          <div className="p-6">
+            <EditHistoryPanel invoiceId={invoice.id} />
+          </div>
           )}
         </div>
       </div>
@@ -584,6 +615,12 @@ export default function SalesPage() {
                   <tr key={inv.id} className="hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3">
                       <span className="text-sm font-semibold text-blue-600">{inv.invoice_number}</span>
+                      {(inv as any).edit_count > 0 && (
+                        <span className="inline-flex items-center gap-0.5 ml-1 px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-medium rounded" title={`Edited ${(inv as any).edit_count} time${(inv as any).edit_count > 1 ? 's' : ''}`}>
+                          <Pencil className="w-2.5 h-2.5" />
+                          {(inv as any).edit_count}
+                        </span>
+                      )}
                       {hasReturns && (
                         <div className="flex items-center gap-1 mt-1">
                           <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded">
@@ -663,6 +700,11 @@ export default function SalesPage() {
                         <button onClick={() => viewInvoiceDetails(inv)} className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-lg hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition" title="View Details">
                           <Eye className="w-3.5 h-3.5" />
                         </button>
+                        {canEditInvoice(inv) && (
+                          <button onClick={() => setEditingInvoice(inv)} className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-lg hover:bg-amber-50 text-muted-foreground hover:text-amber-600 transition" title="Edit Invoice">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -717,6 +759,16 @@ export default function SalesPage() {
           companySettings={companySettings}
           onClose={() => setConvertingInvoice(null)}
           onSaved={() => { setConvertingInvoice(null); loadData(); }}
+        />
+      )}
+
+      {editingInvoice && (
+        <EditInvoiceModal
+          invoice={editingInvoice}
+          customers={customers}
+          products={products}
+          onClose={() => setEditingInvoice(null)}
+          onSaved={() => { setEditingInvoice(null); loadData(); }}
         />
       )}
 

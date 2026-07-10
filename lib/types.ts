@@ -244,9 +244,27 @@ export interface Invoice {
   amount_paid: number;
   balance_due: number;
   is_pos: boolean;
+  edit_count?: number;
   created_at: string;
   updated_at: string;
   customer?: Customer;
+}
+
+export interface InvoiceEditHistory {
+  id: string;
+  invoice_id: string;
+  invoice_number: string;
+  edited_by?: string;
+  edited_by_name?: string;
+  edited_at: string;
+  change_type: string;
+  field_changed?: string;
+  old_value?: Record<string, unknown>;
+  new_value?: Record<string, unknown>;
+  reason?: string;
+  snapshot_before?: Record<string, unknown>;
+  snapshot_after?: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface InvoiceItem {

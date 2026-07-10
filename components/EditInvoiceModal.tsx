@@ -1,0 +1,519 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabase';
+import { formatCurrency } from '@/lib/format';
+import { toast } from '@/hooks/use-toast';
+import { X, Save, TriangleAlert as AlertTriangle, History, Package, Trash2, Plus } from 'lucide-react';
+import type { Invoice, InvoiceStatus, Customer, Product, ProductUnit, PaymentMethod } from '@/lib/types';
+import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
+import ProductSearchInput from '@/components/ui/ProductSearchInput';
+
+interface EditableInvoice extends Omit<Invoice, 'customer'> {
+  customer?: { name: string; code: string; phone?: string; address?: string };
+}
+
+interface EditInvoiceModalProps {
+  invoice: EditableInvoice;
+  customers: Customer[];
+  products: Product[];
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+interface EditItem {
+  id?: string;
+  product_id: string;
+  product_name: string;
+  product_sku: string;
+  product_unit?: string;
+  product_base_unit?: string;
+  stock_qty: number | null;
+  quantity: number;
+  unit_price: number;
+  cost_price: number;
+  discount_percent: number;
+  selected_unit?: ProductUnit;
+  available_units?: ProductUnit[];
+  base_quantity: number;
+  subtotal: number;
+}
+
+export default function EditInvoiceModal({ invoice, customers, products, onClose, onSaved }: EditInvoiceModalProps) {
+  const [form, setForm] = useState({
+    customer_id: invoice.customer_id,
+    invoice_date: invoice.invoice_date,
+    due_date: invoice.due_date || '',
+    notes: (invoice as any).notes || '',
+  });
+  const [items, setItems] = useState<EditItem[]>([]);
+  const [originalItems, setOriginalItems] = useState<EditItem[]>([]);
+  const [originalHeader, setOriginalHeader] = useState({ ...form });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [editReason, setEditReason] = useState('');
+  const [showReason, setShowReason] = useState(false);
+  const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
+
+  const isDraft = invoice.status === 'draft';
+  const isPartialOrPaid = invoice.status === 'partially_paid' || invoice.status === 'paid';
+  const isPos = invoice.is_pos;
+  const itemsLocked = isPartialOrPaid || isPos;
+  const headerLocked = isPos;
+
+  useEffect(() => {
+    loadInvoiceItems();
+    supabase.from('payment_methods').select('code, name').eq('is_active', true).order('sort_order')
+      .then(({ data }) => { if (data) setPaymentMethods(data); });
+  }, []);
+
+  async function loadInvoiceItems() {
+    const { data } = await supabase
+      .from('invoice_items')
+      .select('*, product:products(name, sku, unit, base_unit, enable_multi_unit, units:product_units(id, product_id, unit_name, unit_short, conversion_factor, is_base_unit, is_sale_unit, price, cost_price, is_active, sort_order), inventory_items(quantity_on_hand))')
+      .eq('invoice_id', invoice.id);
+
+    const mapped: EditItem[] = (data || []).map((item: any) => {
+      const product = item.product;
+      const multiUnit = product?.enable_multi_unit && product?.units?.filter((u: any) => u.is_active).length > 0;
+      const matchedUnit = multiUnit ? product.units.find((u: any) => u.unit_name === item.unit_name) : undefined;
+      const stock = product?.inventory_items?.reduce((s: number, i: any) => s + Number(i.quantity_on_hand), 0) ?? null;
+
+      return {
+        id: item.id,
+        product_id: item.product_id,
+        product_name: product?.name || '—',
+        product_sku: product?.sku || '',
+        product_unit: product?.unit,
+        product_base_unit: product?.base_unit,
+        stock_qty: stock,
+        quantity: Number(item.quantity),
+        unit_price: Number(item.unit_price),
+        cost_price: Number(item.cost_price) || 0,
+        discount_percent: Number(item.discount_percent) || 0,
+        selected_unit: matchedUnit,
+        available_units: multiUnit ? product.units.filter((u: any) => u.is_active) : undefined,
+        base_quantity: Number(item.base_quantity) || Number(item.quantity),
+        subtotal: Number(item.subtotal),
+      };
+    });
+
+    setItems(mapped);
+    setOriginalItems(mapped.map(m => ({ ...m })));
+  }
+
+  function addProductToItems(product: any) {
+    if (itemsLocked) return;
+    const multiUnit = product.enable_multi_unit && product.units && product.units.filter((u: any) => u.is_active).length > 0;
+    const defaultUnit: ProductUnit | undefined = multiUnit ? getDefaultSaleUnit(product) : undefined;
+    const unitPrice = defaultUnit ? defaultUnit.price : (product.sale_price || 0);
+    const baseQty = defaultUnit ? convertToBaseUnit(1, defaultUnit) : 1;
+    const stock = product.inventory_items?.reduce((s: number, i: any) => s + Number(i.quantity_on_hand), 0) ?? null;
+
+    if (stock !== null && stock <= 0) {
+      toast({ title: 'Out of stock', description: `${product.name} is not available`, variant: 'destructive' });
+      return;
+    }
+
+    const existingIndex = items.findIndex(
+      i => i.product_id === product.id && (i.selected_unit?.id ?? '') === (defaultUnit?.id ?? '')
+    );
+    if (existingIndex >= 0) {
+      const updated = [...items];
+      const ex = updated[existingIndex];
+      const newQty = ex.quantity + 1;
+      const newBase = ex.selected_unit ? convertToBaseUnit(newQty, ex.selected_unit) : newQty;
+      if (ex.stock_qty !== null && newBase > ex.stock_qty) {
+        toast({ title: 'Stock limit', description: `Only ${ex.stock_qty} ${ex.product_base_unit || 'units'} available`, variant: 'destructive' });
+        return;
+      }
+      updated[existingIndex] = { ...ex, quantity: newQty, base_quantity: newBase, subtotal: newQty * ex.unit_price * (1 - (ex.discount_percent || 0) / 100) };
+      setItems(updated);
+      return;
+    }
+
+    setItems(prev => [...prev, {
+      product_id: product.id,
+      product_name: product.name,
+      product_sku: product.sku,
+      product_unit: product.unit,
+      product_base_unit: product.base_unit,
+      stock_qty: stock,
+      quantity: 1,
+      unit_price: unitPrice,
+      cost_price: defaultUnit ? (defaultUnit.cost_price || product.cost_price || 0) : (product.cost_price || 0),
+      discount_percent: 0,
+      selected_unit: defaultUnit,
+      available_units: multiUnit ? product.units.filter((u: any) => u.is_active) : undefined,
+      base_quantity: baseQty,
+      subtotal: unitPrice,
+    }]);
+  }
+
+  function updateItem(index: number, field: string, value: any) {
+    if (itemsLocked) return;
+    const updated = [...items];
+    if (field === 'selected_unit') {
+      const unit = value as ProductUnit;
+      const newBaseQty = convertToBaseUnit(updated[index].quantity, unit);
+      updated[index] = { ...updated[index], selected_unit: unit, unit_price: unit.price, base_quantity: newBaseQty, subtotal: updated[index].quantity * unit.price * (1 - (updated[index].discount_percent || 0) / 100) };
+    } else if (field === 'quantity') {
+      const qty = parseInt(value) || 1;
+      const unit = updated[index].selected_unit;
+      const newBaseQty = unit ? convertToBaseUnit(qty, unit) : qty;
+      updated[index] = { ...updated[index], quantity: qty, base_quantity: newBaseQty, subtotal: qty * updated[index].unit_price * (1 - (updated[index].discount_percent || 0) / 100) };
+    } else if (field === 'unit_price') {
+      updated[index] = { ...updated[index], unit_price: parseFloat(value) || 0, subtotal: updated[index].quantity * (parseFloat(value) || 0) * (1 - (updated[index].discount_percent || 0) / 100) };
+    } else if (field === 'discount_percent') {
+      const disc = Math.min(100, Math.max(0, parseFloat(value) || 0));
+      updated[index] = { ...updated[index], discount_percent: disc, subtotal: updated[index].quantity * updated[index].unit_price * (1 - disc / 100) };
+    }
+    setItems(updated);
+  }
+
+  function removeItem(index: number) {
+    if (itemsLocked) return;
+    setItems(items.filter((_, i) => i !== index));
+  }
+
+  const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+  const hasItemChanges = JSON.stringify(items.map(i => ({ product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price, discount_percent: i.discount_percent, selected_unit_id: i.selected_unit?.id }))) !== JSON.stringify(originalItems.map(i => ({ product_id: i.product_id, quantity: i.quantity, unit_price: i.unit_price, discount_percent: i.discount_percent, selected_unit_id: i.selected_unit?.id })));
+  const hasHeaderChanges = form.customer_id !== originalHeader.customer_id || form.invoice_date !== originalHeader.invoice_date || form.due_date !== originalHeader.due_date || form.notes !== originalHeader.notes;
+  const hasChanges = hasItemChanges || hasHeaderChanges;
+
+  useEffect(() => {
+    setShowReason(!isDraft && hasChanges);
+  }, [hasChanges, isDraft]);
+
+  async function captureSnapshot(): Promise<Record<string, unknown>> {
+    const { data: invItems } = await supabase
+      .from('invoice_items')
+      .select('product_id, quantity, unit_price, discount_percent, subtotal, unit_name, base_quantity')
+      .eq('invoice_id', invoice.id);
+    return {
+      customer_id: invoice.customer_id,
+      invoice_date: invoice.invoice_date,
+      due_date: invoice.due_date,
+      notes: (invoice as any).notes,
+      subtotal: Number(invoice.subtotal),
+      total_amount: Number(invoice.total_amount),
+      items: invItems || [],
+    };
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!hasChanges) { toast({ title: 'No changes', description: 'Nothing was modified' }); return; }
+    if (showReason && !editReason.trim()) { setError('Please provide a reason for this edit'); return; }
+    if (items.length === 0) { setError('Invoice must have at least one item'); return; }
+
+    for (const item of items) {
+      if (item.stock_qty !== null && item.base_quantity > item.stock_qty) {
+        setError(`Insufficient stock for ${item.product_name}. Available: ${item.stock_qty} ${item.product_base_unit || 'units'}`);
+        return;
+      }
+    }
+
+    setSaving(true);
+    setError('');
+
+    try {
+      const snapshotBefore = await captureSnapshot();
+
+      // 1. Update invoice header
+      const { error: invError } = await supabase
+        .from('invoices')
+        .update({
+          customer_id: form.customer_id,
+          invoice_date: form.invoice_date,
+          due_date: form.due_date || null,
+          notes: form.notes || null,
+          subtotal,
+          total_amount: subtotal,
+          balance_due: subtotal - Number(invoice.amount_paid),
+          status: subtotal - Number(invoice.amount_paid) <= 0 ? 'paid' : (Number(invoice.amount_paid) > 0 ? 'partially_paid' : invoice.status),
+          edit_count: (invoice.edit_count || 0) + 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', invoice.id);
+
+      if (invError) throw new Error(invError.message);
+
+      // 2. Handle item changes: delete old items + insert new ones (triggers re-fire for stock/COGS)
+      if (hasItemChanges && !itemsLocked) {
+        // Delete existing items (stock trigger fires reverse on delete if configured, or we handle manually)
+        const { error: delError } = await supabase
+          .from('invoice_items')
+          .delete()
+          .eq('invoice_id', invoice.id);
+
+        if (delError) throw new Error(delError.message);
+
+        // Insert new items (stock deduction + COGS triggers fire automatically)
+        const newItems = items.map((item, idx) => ({
+          invoice_id: invoice.id,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          cost_price: item.cost_price || 0,
+          discount_percent: item.discount_percent || 0,
+          tax_rate: 0,
+          subtotal: item.subtotal,
+          unit_name: item.selected_unit?.unit_name,
+          unit_conversion_factor: item.selected_unit?.conversion_factor,
+          base_quantity: item.base_quantity,
+          sort_order: idx,
+        }));
+
+        const { error: itemsError } = await supabase.from('invoice_items').insert(newItems);
+        if (itemsError) throw new Error(itemsError.message);
+      }
+
+      // 3. Capture after snapshot
+      const { data: newInvItems } = await supabase
+        .from('invoice_items')
+        .select('product_id, quantity, unit_price, discount_percent, subtotal, unit_name, base_quantity')
+        .eq('invoice_id', invoice.id);
+
+      const snapshotAfter = {
+        customer_id: form.customer_id,
+        invoice_date: form.invoice_date,
+        due_date: form.due_date,
+        notes: form.notes,
+        subtotal,
+        total_amount: subtotal,
+        items: newInvItems || [],
+      };
+
+      // 4. Record edit history
+      const changeTypes: string[] = [];
+      if (hasHeaderChanges) changeTypes.push('header_edit');
+      if (hasItemChanges) changeTypes.push('full_edit');
+
+      await supabase.from('invoice_edit_history').insert({
+        invoice_id: invoice.id,
+        invoice_number: invoice.invoice_number,
+        edited_by_name: 'Current User',
+        change_type: changeTypes.join(','),
+        field_changed: hasHeaderChanges ? 'header' : null,
+        old_value: snapshotBefore,
+        new_value: snapshotAfter,
+        reason: editReason || null,
+        snapshot_before: snapshotBefore,
+        snapshot_after: snapshotAfter,
+      });
+
+      toast({ title: 'Success', description: 'Invoice updated successfully' });
+      onSaved();
+    } catch (err: any) {
+      setError(err.message || 'Failed to update invoice');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-white z-10">
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-bold">Edit Invoice {invoice.invoice_number}</h2>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${isDraft ? 'bg-gray-100 text-gray-600' : isPartialOrPaid ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+              {invoice.status.replace('_', ' ')}
+            </span>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+
+        <form onSubmit={handleSave} className="p-6 space-y-4">
+          {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+
+          {isPos && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex gap-2 text-sm text-amber-700">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>This is a POS invoice. Only notes can be edited — financial fields and items are locked.</span>
+            </div>
+          )}
+
+          {itemsLocked && !isPos && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex gap-2 text-sm text-amber-700">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>This invoice has payments recorded. Line items are locked — only header fields and notes can be changed. To modify items, process a return first.</span>
+            </div>
+          )}
+
+          {/* Header fields */}
+          <div className="grid grid-cols-3 gap-4">
+            <div className="col-span-2">
+              <label className="block text-xs font-medium mb-1">Customer *</label>
+              <select
+                required
+                value={form.customer_id}
+                disabled={headerLocked}
+                onChange={e => setForm({ ...form, customer_id: e.target.value })}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none disabled:bg-muted/50"
+              >
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium mb-1">Invoice Date</label>
+                <input
+                  type="date"
+                  value={form.invoice_date}
+                  disabled={headerLocked}
+                  onChange={e => setForm({ ...form, invoice_date: e.target.value })}
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none disabled:bg-muted/50"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Due Date</label>
+                <input
+                  type="date"
+                  value={form.due_date}
+                  onChange={e => setForm({ ...form, due_date: e.target.value })}
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Line Items */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs font-medium">Line Items</label>
+              <span className="text-xs text-muted-foreground">{items.length} item{items.length !== 1 ? 's' : ''}</span>
+            </div>
+            {!itemsLocked && (
+              <ProductSearchInput
+                onSelect={addProductToItems}
+                showStock
+                placeholder="Search and add products..."
+                className="mb-3"
+              />
+            )}
+            {items.length > 0 && (
+              <div className="border border-border rounded-lg overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Product</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-20">Qty</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-28">Price</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-20">Disc %</th>
+                      <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2 w-28">Total</th>
+                      <th className="w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {items.map((item, index) => (
+                      <tr key={index} className={originalItems.find(o => o.id === item.id) && JSON.stringify({ q: o_originalQty(originalItems, index), p: originalItems[index]?.unit_price, d: originalItems[index]?.discount_percent }) !== JSON.stringify({ q: item.quantity, p: item.unit_price, d: item.discount_percent }) ? 'bg-blue-50/40' : ''}>
+                        <td className="px-3 py-2">
+                          <p className="text-sm font-medium text-foreground">{item.product_name}</p>
+                          <p className="text-[10px] text-muted-foreground">{item.product_sku}</p>
+                          {item.stock_qty !== null && (
+                            <p className={`text-[10px] font-medium ${item.stock_qty > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                              {item.stock_qty} {item.product_base_unit || 'units'} in stock
+                            </p>
+                          )}
+                          {item.available_units && item.selected_unit && (
+                            <select
+                              value={item.selected_unit.id}
+                              disabled={itemsLocked}
+                              onChange={e => {
+                                const unit = item.available_units?.find(u => u.id === e.target.value);
+                                if (unit) updateItem(index, 'selected_unit', unit);
+                              }}
+                              className="mt-1 w-full border border-blue-200 bg-blue-50 text-blue-700 rounded px-2 py-1 text-xs focus:outline-none disabled:opacity-50"
+                            >
+                              {item.available_units.map(u => <option key={u.id} value={u.id}>{u.unit_name} - {formatCurrency(u.price)}</option>)}
+                            </select>
+                          )}
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" min="1" value={item.quantity} disabled={itemsLocked}
+                            onChange={e => updateItem(index, 'quantity', e.target.value)}
+                            className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none disabled:bg-muted/50" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" min="0" step="0.01" value={item.unit_price} disabled={itemsLocked}
+                            onChange={e => updateItem(index, 'unit_price', e.target.value)}
+                            className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none disabled:bg-muted/50" />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input type="number" min="0" max="100" step="0.5" value={item.discount_percent || 0} disabled={itemsLocked}
+                            onChange={e => updateItem(index, 'discount_percent', e.target.value)}
+                            className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none disabled:bg-muted/50" placeholder="0" />
+                        </td>
+                        <td className="px-3 py-2 text-right text-sm font-semibold">
+                          {formatCurrency(item.subtotal)}
+                          {(item.discount_percent || 0) > 0 && (
+                            <p className="text-[10px] text-amber-600 line-through">{formatCurrency(item.quantity * item.unit_price)}</p>
+                          )}
+                        </td>
+                        <td className="px-2 py-2">
+                          {!itemsLocked && (
+                            <button type="button" onClick={() => removeItem(index)} className="text-red-500 hover:text-red-600">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Total */}
+          <div className="flex justify-end bg-muted/30 rounded-lg p-3">
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">Subtotal</p>
+              <p className="text-lg font-bold text-foreground">{formatCurrency(subtotal)}</p>
+              {subtotal !== Number(invoice.total_amount) && (
+                <p className="text-[10px] text-blue-600">Was: {formatCurrency(Number(invoice.total_amount))}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Edit reason for non-draft invoices */}
+          {showReason && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <label className="block text-xs font-medium mb-1 text-blue-800">
+                Reason for Edit <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={editReason}
+                onChange={e => setEditReason(e.target.value)}
+                rows={2}
+                placeholder="Why is this invoice being edited? (e.g. 'Wrong price entered', 'Product added by mistake')"
+                className="w-full border border-blue-300 bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              />
+            </div>
+          )}
+
+          {/* Notes */}
+          <div>
+            <label className="block text-xs font-medium mb-1">Notes</label>
+            <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2}
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              placeholder="Additional notes..." />
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted transition">Cancel</button>
+            <button type="submit" disabled={saving || !hasChanges} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60">
+              <Save className="w-4 h-4" />
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function o_originalQty(originalItems: EditItem[], index: number): number {
+  return originalItems[index]?.quantity || 0;
+}
