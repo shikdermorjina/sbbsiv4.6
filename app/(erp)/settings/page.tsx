@@ -1,11 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { toast } from '@/hooks/use-toast';
-import { Settings, User, Bell, Shield, Palette, Building2, Save, Database, RefreshCw, Trash2 } from 'lucide-react';
+import { Settings, User, Bell, Shield, Palette, Building2, Save, Database, RefreshCw, Trash2, Download, AlertTriangle, Package, FileText, ShoppingCart, Truck, ClipboardList, BookOpen, CheckCircle2, Loader2, X } from 'lucide-react';
 
 type SettingsTab = 'general' | 'profile' | 'notifications' | 'security' | 'appearance' | 'data';
+
+interface DeleteTarget {
+  key: string;
+  label: string;
+  description: string;
+  tables: string[];
+  count?: number;
+}
 
 interface CompanySettings {
   name: string;
@@ -46,6 +54,9 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [backupLoading, setBackupLoading] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [deleteCounts, setDeleteCounts] = useState<Record<string, number>>({});
 
   // Settings state
   const [company, setCompany] = useState<CompanySettings>({
@@ -85,9 +96,82 @@ export default function SettingsPage() {
     confirm: '',
   });
 
-  useEffect(() => {
-    loadSettings();
-  }, []);
+  useEffect(() => { loadSettings(); }, []);
+  useEffect(() => { if (activeTab === 'data') loadDeleteCounts(); }, [activeTab]);
+
+  async function loadDeleteCounts() {
+    const targets = [
+      { key: 'products', tables: ['products'] },
+      { key: 'invoices', tables: ['invoices'] },
+      { key: 'quotations', tables: ['quotations'] },
+      { key: 'deliveries', tables: ['deliveries'] },
+      { key: 'purchases', tables: ['purchase_orders'] },
+      { key: 'journal', tables: ['journal_entries'] },
+    ];
+    const results = await Promise.all(
+      targets.map(async (t) => {
+        const { count } = await supabase.from(t.tables[0] as any).select('*', { count: 'exact', head: true });
+        return { key: t.key, count: count || 0 };
+      })
+    );
+    const counts: Record<string, number> = {};
+    results.forEach(r => { counts[r.key] = r.count; });
+    setDeleteCounts(counts);
+  }
+
+  async function downloadBackup() {
+    setBackupLoading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/db-backup`;
+      const res = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${session?.access_token || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`,
+          'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error || 'Backup failed');
+      }
+      const blob = await res.blob();
+      const filename = `erp-backup-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast({ title: 'Backup Downloaded', description: `Saved as ${filename}` });
+    } catch (err: any) {
+      toast({ title: 'Backup Failed', description: err.message, variant: 'destructive' });
+    } finally {
+      setBackupLoading(false);
+    }
+  }
+
+  async function executeDelete(target: DeleteTarget) {
+    const deleteMap: Record<string, string[]> = {
+      products: [
+        'warranty_records', 'stock_movements', 'delivery_items', 'inventory_items',
+        'invoice_items', 'purchase_order_items', 'quotation_items',
+        'product_variants', 'product_colors', 'product_sizes', 'product_units', 'products',
+      ],
+      invoices: [
+        'sales_return_items', 'sales_returns', 'store_credit_redemptions',
+        'payments', 'invoice_items', 'deliveries', 'invoices',
+      ],
+      quotations: ['quotation_items', 'quotations'],
+      deliveries: ['delivery_items', 'deliveries'],
+      purchases: ['goods_receipt_notes', 'purchase_order_items', 'purchase_orders'],
+      journal: ['journal_lines', 'journal_entries'],
+    };
+    const tables = deleteMap[target.key] || target.tables;
+    for (const table of tables) {
+      await supabase.from(table as any).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    }
+    await loadDeleteCounts();
+    toast({ title: 'Deleted', description: `All ${target.label} have been deleted` });
+  }
 
   async function loadSettings() {
     setLoading(true);
@@ -548,140 +632,195 @@ export default function SettingsPage() {
             <div>
               <div className="px-6 py-4 border-b border-border">
                 <h2 className="text-base font-bold">Data Management</h2>
-                <p className="text-xs text-muted-foreground mt-0.5">Manage seed data and reset options</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Backup, export, and manage your ERP data</p>
               </div>
-              <div className="p-6 space-y-5">
-                <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
-                  <p className="text-sm font-semibold text-amber-700">Warning</p>
-                  <p className="text-xs text-amber-600 mt-1">These actions are irreversible. Please backup your data before proceeding.</p>
-                </div>
+              <div className="p-6 space-y-6">
 
-                <div className="border border-border rounded-xl p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">Reset Seed Data</p>
-                      <p className="text-xs text-muted-foreground">Remove all sample/demo data and start fresh</p>
+                {/* ── BACKUP SECTION ── */}
+                <div className="rounded-xl border border-blue-200 bg-blue-50/50 overflow-hidden">
+                  <div className="px-5 py-4 border-b border-blue-100">
+                    <div className="flex items-center gap-2">
+                      <Database className="w-4 h-4 text-blue-600" />
+                      <h3 className="text-sm font-bold text-blue-800">Database Backup</h3>
+                    </div>
+                    <p className="text-xs text-blue-600 mt-1">Downloads a full JSON backup of all your data, schema column definitions, and RLS policies.</p>
+                  </div>
+                  <div className="px-5 py-4 space-y-3">
+                    <div className="grid grid-cols-3 gap-3 text-center">
+                      {[
+                        { label: 'All Tables', value: '42' },
+                        { label: 'Schema Info', value: 'Included' },
+                        { label: 'RLS Policies', value: 'Included' },
+                      ].map(s => (
+                        <div key={s.label} className="bg-white rounded-lg p-3 border border-blue-100">
+                          <p className="text-base font-bold text-blue-700">{s.value}</p>
+                          <p className="text-[10px] text-blue-500 mt-0.5">{s.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="p-3 bg-white border border-blue-100 rounded-lg text-xs text-blue-700 space-y-1">
+                      <p className="font-semibold">What is included in the backup:</p>
+                      <ul className="list-disc list-inside space-y-0.5 text-blue-600">
+                        <li>All rows from every table (products, invoices, customers, etc.)</li>
+                        <li>Column definitions from <code className="bg-blue-100 px-1 rounded">information_schema</code></li>
+                        <li>All RLS policies from <code className="bg-blue-100 px-1 rounded">pg_policies</code></li>
+                        <li>Table constraints (primary keys, foreign keys)</li>
+                        <li>Row counts per table</li>
+                      </ul>
+                      <p className="text-amber-600 font-medium mt-2">Note: Trigger functions and stored procedures require a full pg_dump for complete schema backup.</p>
                     </div>
                     <button
-                      onClick={async () => {
-                        if (!confirm('Are you sure you want to remove ALL seed data? This will delete sample products, customers, and transactions.')) return;
-                        setSaving(true);
-
-                        const tables = [
-                          'invoice_items', 'payments', 'invoices', 'quotations',
-                          'stock_movements', 'inventory_items', 'purchase_order_items', 'purchase_orders',
-                          'delivery_items', 'deliveries', 'products', 'customers', 'suppliers',
-                          'product_colors', 'product_sizes', 'product_units'
-                        ];
-
-                        for (const table of tables) {
-                          await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
-                        }
-
-                        toast({ title: 'Success', description: 'All seed data has been removed' });
-                        setSaving(false);
-                      }}
-                      disabled={saving}
-                      className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60"
+                      onClick={downloadBackup}
+                      disabled={backupLoading}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60 w-full justify-center"
                     >
-                      <Trash2 className="w-4 h-4" />
-                      Clear All Data
+                      {backupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                      {backupLoading ? 'Preparing backup...' : 'Download Full Backup (.json)'}
                     </button>
                   </div>
                 </div>
 
-                <div className="border border-border rounded-xl p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">Reset Categories & Brands</p>
-                      <p className="text-xs text-muted-foreground">Remove all categories and brands</p>
+                {/* ── SELECTIVE DELETE SECTION ── */}
+                <div className="rounded-xl border border-red-200 overflow-hidden">
+                  <div className="px-5 py-4 bg-red-50 border-b border-red-100">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-red-600" />
+                      <h3 className="text-sm font-bold text-red-800">Selective Data Deletion</h3>
                     </div>
-                    <button
-                      onClick={async () => {
-                        if (!confirm('Remove all categories and brands?')) return;
-                        setSaving(true);
-                        await supabase.from('products').update({ category_id: null, brand_id: null }).neq('id', '00000000-0000-0000-0000-000000000000');
-                        await supabase.from('categories').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-                        await supabase.from('brands').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-                        toast({ title: 'Success', description: 'Categories and brands cleared' });
-                        setSaving(false);
-                      }}
-                      disabled={saving}
-                      className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60"
-                    >
-                      <RefreshCw className="w-4 h-4" />
-                      Reset
-                    </button>
+                    <p className="text-xs text-red-600 mt-1">Permanently delete specific data categories. These actions cannot be undone. Download a backup first.</p>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {([
+                      {
+                        key: 'products',
+                        label: 'All Products',
+                        description: 'Deletes all products, units, variants, and inventory items. Also clears invoice/PO line items.',
+                        tables: ['products'],
+                        icon: Package,
+                        color: 'text-orange-600',
+                        bg: 'bg-orange-50',
+                      },
+                      {
+                        key: 'invoices',
+                        label: 'All Invoices & Sales',
+                        description: 'Deletes all invoices (including POS), payments, sales returns, and linked deliveries.',
+                        tables: ['invoices'],
+                        icon: FileText,
+                        color: 'text-blue-600',
+                        bg: 'bg-blue-50',
+                      },
+                      {
+                        key: 'quotations',
+                        label: 'All Quotations',
+                        description: 'Deletes all quotations and their line items.',
+                        tables: ['quotations'],
+                        icon: ClipboardList,
+                        color: 'text-teal-600',
+                        bg: 'bg-teal-50',
+                      },
+                      {
+                        key: 'deliveries',
+                        label: 'All Deliveries',
+                        description: 'Deletes all delivery challans and delivery items.',
+                        tables: ['deliveries'],
+                        icon: Truck,
+                        color: 'text-indigo-600',
+                        bg: 'bg-indigo-50',
+                      },
+                      {
+                        key: 'purchases',
+                        label: 'All Purchases',
+                        description: 'Deletes all purchase orders, GRNs, and purchase line items.',
+                        tables: ['purchase_orders'],
+                        icon: ShoppingCart,
+                        color: 'text-amber-600',
+                        bg: 'bg-amber-50',
+                      },
+                      {
+                        key: 'journal',
+                        label: 'All Journal Entries',
+                        description: 'Deletes all journal entries and journal lines. Account balances will NOT be recalculated automatically.',
+                        tables: ['journal_entries'],
+                        icon: BookOpen,
+                        color: 'text-purple-600',
+                        bg: 'bg-purple-50',
+                      },
+                    ] as (DeleteTarget & { icon: React.ElementType; color: string; bg: string })[]).map((item) => (
+                      <div key={item.key} className="flex items-center justify-between px-5 py-4 hover:bg-muted/20 transition">
+                        <div className="flex items-start gap-3">
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${item.bg}`}>
+                            <item.icon className={`w-4 h-4 ${item.color}`} />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-semibold text-foreground">{item.label}</p>
+                              {deleteCounts[item.key] !== undefined && (
+                                <span className="text-[10px] font-medium px-1.5 py-0.5 bg-muted rounded-full text-muted-foreground">
+                                  {deleteCounts[item.key].toLocaleString()} records
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-0.5 max-w-md">{item.description}</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setDeleteTarget(item)}
+                          disabled={saving || deleteCounts[item.key] === 0}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-xs font-semibold transition disabled:opacity-40 shrink-0 ml-4"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />Delete All
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
-                <div className="border border-border rounded-xl p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">Re-seed Demo Data</p>
-                      <p className="text-xs text-muted-foreground">Add sample products, customers, and transactions</p>
+                {/* ── OTHER ACTIONS ── */}
+                <div className="rounded-xl border border-border overflow-hidden">
+                  <div className="px-5 py-3 bg-muted/30 border-b border-border">
+                    <h3 className="text-sm font-semibold">Other Actions</h3>
+                  </div>
+                  <div className="divide-y divide-border">
+                    <div className="flex items-center justify-between px-5 py-4">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">Reset Categories &amp; Brands</p>
+                        <p className="text-xs text-muted-foreground">Remove all categories and brands</p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Remove all categories and brands?')) return;
+                          setSaving(true);
+                          await supabase.from('products').update({ category_id: null, brand_id: null }).neq('id', '00000000-0000-0000-0000-000000000000');
+                          await supabase.from('categories').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                          await supabase.from('brands').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+                          toast({ title: 'Success', description: 'Categories and brands cleared' });
+                          setSaving(false);
+                        }}
+                        disabled={saving}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-xs font-semibold transition disabled:opacity-60"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />Reset
+                      </button>
                     </div>
-                    <button
-                      onClick={async () => {
-                        if (!confirm('This will add sample data. Continue?')) return;
-                        setSaving(true);
-
-                        const sampleCustomers = [
-                          { id: 'seed-cust-1', code: 'CUST-001', name: 'Abdul Rahman', type: 'retail', country: 'Bangladesh', is_active: true, credit_limit: 50000, credit_days: 30, outstanding_balance: 0, total_purchases: 0, loyalty_points: 100, discount_percent: 5 },
-                          { id: 'seed-cust-2', code: 'CUST-002', name: 'Karim Construction', type: 'contractor', country: 'Bangladesh', is_active: true, credit_limit: 200000, credit_days: 45, outstanding_balance: 0, total_purchases: 0, loyalty_points: 0, discount_percent: 10 },
-                          { id: 'seed-cust-3', code: 'CUST-003', name: 'Fatima Interiors', type: 'interior_designer', country: 'Bangladesh', is_active: true, credit_limit: 100000, credit_days: 30, outstanding_balance: 0, total_purchases: 0, loyalty_points: 50, discount_percent: 8 },
-                        ];
-                        await supabase.from('customers').upsert(sampleCustomers, { onConflict: 'id' });
-
-                        const sampleCategories = [
-                          { id: 'seed-cat-1', name: 'Cement & Concrete', slug: 'cement-concrete', is_active: true, sort_order: 1 },
-                          { id: 'seed-cat-2', name: 'Steel & Iron', slug: 'steel-iron', is_active: true, sort_order: 2 },
-                          { id: 'seed-cat-3', name: 'Paints & Finishes', slug: 'paints-finishes', is_active: true, sort_order: 3 },
-                          { id: 'seed-cat-4', name: 'Tiles & Flooring', slug: 'tiles-flooring', is_active: true, sort_order: 4 },
-                        ];
-                        await supabase.from('categories').upsert(sampleCategories, { onConflict: 'id' });
-
-                        const sampleBrands = [
-                          { id: 'seed-brand-1', name: 'Holcim', slug: 'holcim', is_active: true },
-                          { id: 'seed-brand-2', name: 'BSRM', slug: 'bsrm', is_active: true },
-                          { id: 'seed-brand-3', name: 'Asian Paints', slug: 'asian-paints', is_active: true },
-                          { id: 'seed-brand-4', name: 'Rak Ceramics', slug: 'rak-ceramics', is_active: true },
-                        ];
-                        await supabase.from('brands').upsert(sampleBrands, { onConflict: 'id' });
-
-                        const sampleProducts = [
-                          { id: 'seed-prod-1', sku: 'CEM-001', name: 'Holcim Portland Cement 50kg', category_id: 'seed-cat-1', brand_id: 'seed-brand-1', unit: 'bag', cost_price: 520, sale_price: 550, min_stock_level: 100, is_active: true, is_online: true, warranty_months: 0, tax_rate: 0 },
-                          { id: 'seed-prod-2', sku: 'STL-001', name: 'BSRM 500 Grade Rebar 12mm', category_id: 'seed-cat-2', brand_id: 'seed-brand-2', unit: 'ton', cost_price: 85000, sale_price: 88000, min_stock_level: 10, is_active: true, is_online: true, warranty_months: 0, tax_rate: 0 },
-                          { id: 'seed-prod-3', sku: 'PNT-001', name: 'Asian Paints Emulsion White 20L', category_id: 'seed-cat-3', brand_id: 'seed-brand-3', unit: 'tin', cost_price: 3200, sale_price: 3500, min_stock_level: 20, is_active: true, is_online: true, warranty_months: 12, tax_rate: 0 },
-                          { id: 'seed-prod-4', sku: 'TIL-001', name: 'RAK Floor Tiles 2x2 White', category_id: 'seed-cat-4', brand_id: 'seed-brand-4', unit: 'sqft', cost_price: 65, sale_price: 85, min_stock_level: 500, is_active: true, is_online: true, warranty_months: 0, tax_rate: 0 },
-                        ];
-                        await supabase.from('products').upsert(sampleProducts, { onConflict: 'id' });
-
-                        const defaultWarehouse = await supabase.from('warehouses').select('id').limit(1).single();
-                        if (defaultWarehouse.data) {
-                          const inventoryItems = sampleProducts.map(p => ({
-                            product_id: p.id,
-                            warehouse_id: defaultWarehouse.data.id,
-                            quantity_on_hand: p.min_stock_level * 2,
-                            quantity_reserved: 0,
-                            quantity_incoming: 0,
-                          }));
-                          await supabase.from('inventory_items').upsert(inventoryItems, { onConflict: 'product_id,warehouse_id' });
-                        }
-
-                        toast({ title: 'Success', description: 'Sample data has been added' });
-                        setSaving(false);
-                      }}
-                      disabled={saving}
-                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60"
-                    >
-                      <Database className="w-4 h-4" />
-                      Add Sample Data
-                    </button>
                   </div>
                 </div>
+
               </div>
             </div>
+          )}
+
+          {deleteTarget && (
+            <DeleteConfirmModal
+              target={deleteTarget}
+              onClose={() => setDeleteTarget(null)}
+              onConfirm={async () => {
+                setSaving(true);
+                await executeDelete(deleteTarget);
+                setDeleteTarget(null);
+                setSaving(false);
+              }}
+              saving={saving}
+            />
           )}
 
           <div className="px-6 py-4 border-t border-border flex items-center justify-end gap-3">
@@ -697,6 +836,58 @@ export default function SettingsPage() {
             >
               <Save className="w-4 h-4" />
               {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteConfirmModal({ target, onClose, onConfirm, saving }: {
+  target: DeleteTarget;
+  onClose: () => void;
+  onConfirm: () => void;
+  saving: boolean;
+}) {
+  const [typed, setTyped] = useState('');
+  const confirmWord = 'DELETE';
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-base font-bold text-red-600 flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5" />Delete {target.label}
+          </h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="p-4 bg-red-50 border border-red-200 rounded-xl">
+            <p className="text-sm font-semibold text-red-700">This action is permanent and cannot be undone.</p>
+            <p className="text-xs text-red-600 mt-1">{target.description}</p>
+          </div>
+          <div>
+            <p className="text-sm text-foreground mb-2">
+              Type <span className="font-mono font-bold bg-red-100 px-1.5 py-0.5 rounded text-red-700">{confirmWord}</span> to confirm:
+            </p>
+            <input
+              type="text"
+              value={typed}
+              onChange={e => setTyped(e.target.value.toUpperCase())}
+              placeholder={confirmWord}
+              className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20 font-mono"
+            />
+          </div>
+          <div className="flex items-center justify-end gap-3 pt-1">
+            <button type="button" onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted transition">Cancel</button>
+            <button
+              onClick={onConfirm}
+              disabled={typed !== confirmWord || saving}
+              className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-40"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              {saving ? 'Deleting...' : `Delete All ${target.label}`}
             </button>
           </div>
         </div>
