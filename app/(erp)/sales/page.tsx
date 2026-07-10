@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency, formatDate } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCheck as CheckCircle2, Printer, DollarSign, Send, CreditCard, UserPlus, RotateCcw, Package, Filter, ChevronDown, Wallet, CircleArrowDown as ArrowDownCircle, CircleArrowUp as ArrowUpCircle, Truck, Calendar, ExternalLink, Pencil, History } from 'lucide-react';
+import { ShoppingCart, Plus, Search, Eye, X, Trash2, TrendingUp, Clock, CircleCheck as CheckCircle2, Printer, DollarSign, Send, CreditCard, UserPlus, RotateCcw, Package, Filter, ChevronDown, Wallet, CircleArrowDown as ArrowDownCircle, CircleArrowUp as ArrowUpCircle, Truck, Calendar, ExternalLink, Pencil, History, Ban, TriangleAlert as AlertTriangle } from 'lucide-react';
 import DeliveryChallan from '@/components/DeliveryChallan';
 import EditInvoiceModal from '@/components/EditInvoiceModal';
 import EditHistoryPanel from '@/components/EditHistoryPanel';
@@ -84,6 +84,7 @@ export default function SalesPage() {
   const [convertingInvoice, setConvertingInvoice] = useState<InvoiceWithCustomer | null>(null);
   const [viewingChallan, setViewingChallan] = useState<any>(null);
   const [editingInvoice, setEditingInvoice] = useState<InvoiceWithCustomer | null>(null);
+  const [cancellingInvoice, setCancellingInvoice] = useState<InvoiceWithCustomer | null>(null);
   const [viewTab, setViewTab] = useState<'details' | 'history'>('details');
 
   useEffect(() => { loadData(); }, [period]);
@@ -233,7 +234,12 @@ export default function SalesPage() {
 
   function canEditInvoice(invoice: InvoiceWithCustomer): boolean {
     if (invoice.is_pos) return false;
-    if (invoice.status === 'cancelled' || invoice.status === 'refunded' || invoice.status === 'paid') return false;
+    if (invoice.status === 'cancelled' || invoice.status === 'refunded') return false;
+    return true;
+  }
+
+  function canCancelInvoice(invoice: InvoiceWithCustomer): boolean {
+    if (invoice.status === 'cancelled' || invoice.status === 'draft') return false;
     return true;
   }
 
@@ -269,6 +275,11 @@ export default function SalesPage() {
               {canEditInvoice(invoice) && (
                 <button onClick={() => { onClose(); setEditingInvoice(invoice); }} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition">
                   <Pencil className="w-3.5 h-3.5" />Edit
+                </button>
+              )}
+              {canCancelInvoice(invoice) && (
+                <button onClick={() => { onClose(); setCancellingInvoice(invoice); }} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition">
+                  <Ban className="w-3.5 h-3.5" />Cancel
                 </button>
               )}
               <button onClick={() => window.print()} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">
@@ -633,7 +644,13 @@ export default function SalesPage() {
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-sm text-foreground">{inv.customer?.name || '-'}</td>
+                    <td className="px-4 py-3 text-sm text-foreground">
+                      {inv.customer_id ? (
+                        <Link href={`/crm/${inv.customer_id}`} className="text-blue-600 hover:text-blue-700 hover:underline font-medium" onClick={(e) => e.stopPropagation()}>
+                          {inv.customer?.name || '-'}
+                        </Link>
+                      ) : (inv.customer?.name || '-')}
+                    </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">{formatDate(inv.invoice_date)}</td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">{inv.due_date ? formatDate(inv.due_date) : '-'}</td>
                     <td className="px-4 py-3 text-right text-sm font-semibold text-foreground">{formatCurrency(inv.total_amount)}</td>
@@ -705,6 +722,11 @@ export default function SalesPage() {
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                         )}
+                        {canCancelInvoice(inv) && (
+                          <button onClick={() => setCancellingInvoice(inv)} className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-lg hover:bg-red-50 text-muted-foreground hover:text-red-600 transition" title="Cancel Invoice">
+                            <Ban className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -769,6 +791,14 @@ export default function SalesPage() {
           products={products}
           onClose={() => setEditingInvoice(null)}
           onSaved={() => { setEditingInvoice(null); loadData(); }}
+        />
+      )}
+
+      {cancellingInvoice && (
+        <CancelInvoiceModal
+          invoice={cancellingInvoice}
+          onClose={() => setCancellingInvoice(null)}
+          onDone={() => { setCancellingInvoice(null); loadData(); }}
         />
       )}
 
@@ -1914,6 +1944,184 @@ function ConvertToDeliveryModal({ invoice, companySettings, onClose, onSaved }: 
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function CancelInvoiceModal({ invoice, onClose, onDone }: { invoice: any; onClose: () => void; onDone: () => void }) {
+  const [reason, setReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+  const [error, setError] = useState('');
+  const [step, setStep] = useState<'confirm' | 'processing' | 'done' | 'error'>('confirm');
+  const [result, setResult] = useState<any>(null);
+
+  async function handleCancel() {
+    if (!reason.trim()) { setError('Please provide a reason for cancelling this invoice'); return; }
+
+    setStep('processing');
+    setCancelling(true);
+    setError('');
+
+    try {
+      const { data, error: rpcError } = await supabase.rpc('cancel_invoice', {
+        p_invoice_id: invoice.id,
+        p_reason: reason,
+        p_cancelled_by: 'Current User',
+      });
+
+      if (rpcError) throw new Error(rpcError.message);
+
+      const res = data as any;
+      if (!res.success) throw new Error(res.error || 'Failed to cancel invoice');
+
+      setResult(res);
+      setStep('done');
+      toast({ title: 'Invoice Cancelled', description: `${invoice.invoice_number} has been cancelled successfully` });
+    } catch (err: any) {
+      setError(err.message || 'Failed to cancel invoice');
+      setStep('error');
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center">
+              <Ban className="w-4 h-4 text-red-600" />
+            </div>
+            <h2 className="text-base font-bold">Cancel Invoice {invoice.invoice_number}</h2>
+          </div>
+          <button onClick={step === 'done' ? onDone : onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {step === 'confirm' && (
+          <div className="p-6 space-y-4">
+            {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg flex gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="text-sm text-amber-800">
+                <p className="font-semibold mb-1">This action will reverse all effects of this invoice:</p>
+                <ul className="list-disc list-inside space-y-0.5 text-xs">
+                  <li>Stock will be restored to inventory</li>
+                  <li>Journal entries (AR, Revenue, COGS) will be reversed</li>
+                  {Number(invoice.amount_paid) > 0 && <li>Payments of {formatCurrency(Number(invoice.amount_paid))} will be reversed</li>}
+                  <li>Customer outstanding balance will be updated</li>
+                  <li>This action is recorded in the audit trail</li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 py-2">
+              <div>
+                <p className="text-xs text-muted-foreground">Invoice Total</p>
+                <p className="text-lg font-bold">{formatCurrency(Number(invoice.total_amount))}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Amount Paid</p>
+                <p className="text-lg font-bold text-green-600">{formatCurrency(Number(invoice.amount_paid))}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Status</p>
+                <p className="text-sm font-medium capitalize">{invoice.status.replace('_', ' ')}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Customer</p>
+                <p className="text-sm font-medium">{invoice.customer?.name || '—'}</p>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium mb-1">Reason for Cancellation <span className="text-red-500">*</span></label>
+              <textarea
+                value={reason}
+                onChange={e => setReason(e.target.value)}
+                rows={3}
+                placeholder="Why is this invoice being cancelled? (e.g. 'Duplicate invoice', 'Order cancelled by customer', 'Pricing error')"
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500/20"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted transition">Keep Invoice</button>
+              <button onClick={handleCancel} disabled={cancelling} className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-60">
+                <Ban className="w-4 h-4" />
+                {cancelling ? 'Cancelling...' : 'Cancel Invoice'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 'processing' && (
+          <div className="p-12 text-center">
+            <div className="inline-block w-8 h-8 border-4 border-red-200 border-t-red-600 rounded-full animate-spin mb-4" />
+            <p className="text-sm text-muted-foreground">Cancelling invoice and reversing all effects...</p>
+          </div>
+        )}
+
+        {step === 'done' && (
+          <div className="p-6 space-y-4">
+            <div className="text-center py-4">
+              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <CheckCircle2 className="w-6 h-6 text-green-600" />
+              </div>
+              <h3 className="text-lg font-bold">Invoice Cancelled Successfully</h3>
+              <p className="text-sm text-muted-foreground mt-1">All effects have been reversed</p>
+            </div>
+
+            {result && (
+              <div className="bg-muted/30 rounded-lg p-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Invoice</span>
+                  <span className="font-medium">{result.invoice_number}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Stock Restored</span>
+                  <span className="font-medium text-green-600">{result.stock_restored ? 'Yes' : 'No'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Journal Entries Reversed</span>
+                  <span className="font-medium text-green-600">{result.journal_reversed ? 'Yes' : 'No'}</span>
+                </div>
+                {result.payments_reversed && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Payments Reversed</span>
+                    <span className="font-medium text-amber-600">{formatCurrency(Number(result.total_payments_reversed))}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end">
+              <button onClick={onDone} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition">
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 'error' && (
+          <div className="p-6 space-y-4">
+            <div className="text-center py-4">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <AlertTriangle className="w-6 h-6 text-red-600" />
+              </div>
+              <h3 className="text-lg font-bold">Cancellation Failed</h3>
+              <p className="text-sm text-red-600 mt-1">{error}</p>
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setStep('confirm')} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-muted transition">Try Again</button>
+              <button onClick={onClose} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition">Close</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
