@@ -233,8 +233,7 @@ export default function SalesPage() {
   }
 
   function canEditInvoice(invoice: InvoiceWithCustomer): boolean {
-    if (invoice.is_pos) return false;
-    if (invoice.status === 'cancelled' || invoice.status === 'refunded') return false;
+    if (invoice.status === 'cancelled') return false;
     return true;
   }
 

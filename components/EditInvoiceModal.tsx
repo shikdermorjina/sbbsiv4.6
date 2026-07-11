@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { X, Save, TriangleAlert as AlertTriangle, History, Package, Trash2, Plus } from 'lucide-react';
-import type { Invoice, InvoiceStatus, Customer, Product, ProductUnit, PaymentMethod } from '@/lib/types';
+import { X, Save, TriangleAlert as AlertTriangle, History, Package, Trash2, Info } from 'lucide-react';
+import type { Invoice, InvoiceStatus, Customer, Product, ProductUnit } from '@/lib/types';
 import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
 import ProductSearchInput from '@/components/ui/ProductSearchInput';
 
@@ -53,21 +53,19 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
   const [error, setError] = useState('');
   const [editReason, setEditReason] = useState('');
   const [showReason, setShowReason] = useState(false);
-  const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
+  const [loadingItems, setLoadingItems] = useState(true);
 
   const isDraft = invoice.status === 'draft';
-  const isPartialOrPaid = invoice.status === 'partially_paid' || invoice.status === 'paid';
+  const isPaid = invoice.status === 'paid';
+  const isPartial = invoice.status === 'partially_paid';
   const isPos = invoice.is_pos;
-  const itemsLocked = isPartialOrPaid || isPos;
-  const headerLocked = isPos;
 
   useEffect(() => {
     loadInvoiceItems();
-    supabase.from('payment_methods').select('code, name').eq('is_active', true).order('sort_order')
-      .then(({ data }) => { if (data) setPaymentMethods(data); });
   }, []);
 
   async function loadInvoiceItems() {
+    setLoadingItems(true);
     const { data } = await supabase
       .from('invoice_items')
       .select('*, product:products(name, sku, unit, base_unit, enable_multi_unit, units:product_units(id, product_id, unit_name, unit_short, conversion_factor, is_base_unit, is_sale_unit, price, cost_price, is_active, sort_order), inventory_items(quantity_on_hand))')
@@ -100,10 +98,10 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
 
     setItems(mapped);
     setOriginalItems(mapped.map(m => ({ ...m })));
+    setLoadingItems(false);
   }
 
   function addProductToItems(product: any) {
-    if (itemsLocked) return;
     const multiUnit = product.enable_multi_unit && product.units && product.units.filter((u: any) => u.is_active).length > 0;
     const defaultUnit: ProductUnit | undefined = multiUnit ? getDefaultSaleUnit(product) : undefined;
     const unitPrice = defaultUnit ? defaultUnit.price : (product.sale_price || 0);
@@ -151,7 +149,6 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
   }
 
   function updateItem(index: number, field: string, value: any) {
-    if (itemsLocked) return;
     const updated = [...items];
     if (field === 'selected_unit') {
       const unit = value as ProductUnit;
@@ -172,7 +169,6 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
   }
 
   function removeItem(index: number) {
-    if (itemsLocked) return;
     setItems(items.filter((_, i) => i !== index));
   }
 
@@ -184,22 +180,6 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
   useEffect(() => {
     setShowReason(!isDraft && hasChanges);
   }, [hasChanges, isDraft]);
-
-  async function captureSnapshot(): Promise<Record<string, unknown>> {
-    const { data: invItems } = await supabase
-      .from('invoice_items')
-      .select('product_id, quantity, unit_price, discount_percent, subtotal, unit_name, base_quantity')
-      .eq('invoice_id', invoice.id);
-    return {
-      customer_id: invoice.customer_id,
-      invoice_date: invoice.invoice_date,
-      due_date: invoice.due_date,
-      notes: (invoice as any).notes,
-      subtotal: Number(invoice.subtotal),
-      total_amount: Number(invoice.total_amount),
-      items: invItems || [],
-    };
-  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -218,92 +198,39 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
     setError('');
 
     try {
-      const snapshotBefore = await captureSnapshot();
+      const newItems = items.map((item, idx) => ({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        cost_price: item.cost_price || 0,
+        discount_percent: item.discount_percent || 0,
+        unit_name: item.selected_unit?.unit_name || null,
+        unit_conversion_factor: item.selected_unit?.conversion_factor?.toString() || null,
+        base_quantity: item.base_quantity,
+        sort_order: idx,
+      }));
 
-      // 1. Update invoice header
-      const { error: invError } = await supabase
-        .from('invoices')
-        .update({
-          customer_id: form.customer_id,
-          invoice_date: form.invoice_date,
-          due_date: form.due_date || null,
-          notes: form.notes || null,
-          subtotal,
-          total_amount: subtotal,
-          balance_due: subtotal - Number(invoice.amount_paid),
-          status: subtotal - Number(invoice.amount_paid) <= 0 ? 'paid' : (Number(invoice.amount_paid) > 0 ? 'partially_paid' : invoice.status),
-          edit_count: (invoice.edit_count || 0) + 1,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', invoice.id);
-
-      if (invError) throw new Error(invError.message);
-
-      // 2. Handle item changes: delete old items + insert new ones (triggers re-fire for stock/COGS)
-      if (hasItemChanges && !itemsLocked) {
-        // Delete existing items (stock trigger fires reverse on delete if configured, or we handle manually)
-        const { error: delError } = await supabase
-          .from('invoice_items')
-          .delete()
-          .eq('invoice_id', invoice.id);
-
-        if (delError) throw new Error(delError.message);
-
-        // Insert new items (stock deduction + COGS triggers fire automatically)
-        const newItems = items.map((item, idx) => ({
-          invoice_id: invoice.id,
-          product_id: item.product_id,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          cost_price: item.cost_price || 0,
-          discount_percent: item.discount_percent || 0,
-          tax_rate: 0,
-          subtotal: item.subtotal,
-          unit_name: item.selected_unit?.unit_name,
-          unit_conversion_factor: item.selected_unit?.conversion_factor,
-          base_quantity: item.base_quantity,
-          sort_order: idx,
-        }));
-
-        const { error: itemsError } = await supabase.from('invoice_items').insert(newItems);
-        if (itemsError) throw new Error(itemsError.message);
-      }
-
-      // 3. Capture after snapshot
-      const { data: newInvItems } = await supabase
-        .from('invoice_items')
-        .select('product_id, quantity, unit_price, discount_percent, subtotal, unit_name, base_quantity')
-        .eq('invoice_id', invoice.id);
-
-      const snapshotAfter = {
+      const newData = {
         customer_id: form.customer_id,
         invoice_date: form.invoice_date,
-        due_date: form.due_date,
-        notes: form.notes,
-        subtotal,
-        total_amount: subtotal,
-        items: newInvItems || [],
+        due_date: form.due_date || null,
+        notes: form.notes || null,
+        items: newItems,
       };
 
-      // 4. Record edit history
-      const changeTypes: string[] = [];
-      if (hasHeaderChanges) changeTypes.push('header_edit');
-      if (hasItemChanges) changeTypes.push('full_edit');
-
-      await supabase.from('invoice_edit_history').insert({
-        invoice_id: invoice.id,
-        invoice_number: invoice.invoice_number,
-        edited_by_name: 'Current User',
-        change_type: changeTypes.join(','),
-        field_changed: hasHeaderChanges ? 'header' : null,
-        old_value: snapshotBefore,
-        new_value: snapshotAfter,
-        reason: editReason || null,
-        snapshot_before: snapshotBefore,
-        snapshot_after: snapshotAfter,
+      const { data, error: rpcError } = await supabase.rpc('edit_invoice', {
+        p_invoice_id: invoice.id,
+        p_new_data: newData,
+        p_reason: editReason || null,
+        p_edited_by: 'Current User',
       });
 
-      toast({ title: 'Success', description: 'Invoice updated successfully' });
+      if (rpcError) throw new Error(rpcError.message);
+
+      const res = data as any;
+      if (!res.success) throw new Error(res.error || 'Failed to edit invoice');
+
+      toast({ title: 'Success', description: `Invoice updated — old total: ${formatCurrency(Number(res.old_total))}, new total: ${formatCurrency(Number(res.new_total))}` });
       onSaved();
     } catch (err: any) {
       setError(err.message || 'Failed to update invoice');
@@ -317,9 +244,10 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
         <div className="flex items-center justify-between px-6 py-4 border-b border-border sticky top-0 bg-white z-10">
           <div className="flex items-center gap-2">
             <h2 className="text-base font-bold">Edit Invoice {invoice.invoice_number}</h2>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${isDraft ? 'bg-gray-100 text-gray-600' : isPartialOrPaid ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${isDraft ? 'bg-gray-100 text-gray-600' : isPaid ? 'bg-green-100 text-green-700' : isPartial ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
               {invoice.status.replace('_', ' ')}
             </span>
+            {isPos && <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700">POS</span>}
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
         </div>
@@ -327,17 +255,13 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
         <form onSubmit={handleSave} className="p-6 space-y-4">
           {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
 
-          {isPos && (
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex gap-2 text-sm text-amber-700">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>This is a POS invoice. Only notes can be edited — financial fields and items are locked.</span>
-            </div>
-          )}
-
-          {itemsLocked && !isPos && (
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex gap-2 text-sm text-amber-700">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>This invoice has payments recorded. Line items are locked — only header fields and notes can be changed. To modify items, process a return first.</span>
+          {!isDraft && hasChanges && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg flex gap-2 text-sm text-blue-800">
+              <Info className="w-4 h-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium mb-0.5">Full Edit Mode</p>
+                <p className="text-xs">This invoice has accounting entries. Editing will reverse all old effects (stock, journal, payments) and re-apply them with the new values. The edit is recorded in the audit trail.</p>
+              </div>
             </div>
           )}
 
@@ -348,9 +272,8 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
               <select
                 required
                 value={form.customer_id}
-                disabled={headerLocked}
                 onChange={e => setForm({ ...form, customer_id: e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none disabled:bg-muted/50"
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
               >
                 {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.code})</option>)}
               </select>
@@ -361,9 +284,8 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
                 <input
                   type="date"
                   value={form.invoice_date}
-                  disabled={headerLocked}
                   onChange={e => setForm({ ...form, invoice_date: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none disabled:bg-muted/50"
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
               </div>
               <div>
@@ -372,7 +294,7 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
                   type="date"
                   value={form.due_date}
                   onChange={e => setForm({ ...form, due_date: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
               </div>
             </div>
@@ -384,15 +306,15 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
               <label className="text-xs font-medium">Line Items</label>
               <span className="text-xs text-muted-foreground">{items.length} item{items.length !== 1 ? 's' : ''}</span>
             </div>
-            {!itemsLocked && (
-              <ProductSearchInput
-                onSelect={addProductToItems}
-                showStock
-                placeholder="Search and add products..."
-                className="mb-3"
-              />
-            )}
-            {items.length > 0 && (
+            <ProductSearchInput
+              onSelect={addProductToItems}
+              showStock
+              placeholder="Search and add products..."
+              className="mb-3"
+            />
+            {loadingItems ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">Loading items...</div>
+            ) : items.length > 0 ? (
               <div className="border border-border rounded-lg overflow-hidden">
                 <table className="w-full">
                   <thead className="bg-muted/40">
@@ -407,7 +329,7 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
                   </thead>
                   <tbody className="divide-y divide-border">
                     {items.map((item, index) => (
-                      <tr key={index} className={originalItems.find(o => o.id === item.id) && JSON.stringify({ q: o_originalQty(originalItems, index), p: originalItems[index]?.unit_price, d: originalItems[index]?.discount_percent }) !== JSON.stringify({ q: item.quantity, p: item.unit_price, d: item.discount_percent }) ? 'bg-blue-50/40' : ''}>
+                      <tr key={index} className={JSON.stringify(originalItems[index]) !== JSON.stringify(item) ? 'bg-blue-50/40' : ''}>
                         <td className="px-3 py-2">
                           <p className="text-sm font-medium text-foreground">{item.product_name}</p>
                           <p className="text-[10px] text-muted-foreground">{item.product_sku}</p>
@@ -419,31 +341,30 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
                           {item.available_units && item.selected_unit && (
                             <select
                               value={item.selected_unit.id}
-                              disabled={itemsLocked}
                               onChange={e => {
                                 const unit = item.available_units?.find(u => u.id === e.target.value);
                                 if (unit) updateItem(index, 'selected_unit', unit);
                               }}
-                              className="mt-1 w-full border border-blue-200 bg-blue-50 text-blue-700 rounded px-2 py-1 text-xs focus:outline-none disabled:opacity-50"
+                              className="mt-1 w-full border border-blue-200 bg-blue-50 text-blue-700 rounded px-2 py-1 text-xs focus:outline-none"
                             >
                               {item.available_units.map(u => <option key={u.id} value={u.id}>{u.unit_name} - {formatCurrency(u.price)}</option>)}
                             </select>
                           )}
                         </td>
                         <td className="px-3 py-2">
-                          <input type="number" min="1" value={item.quantity} disabled={itemsLocked}
+                          <input type="number" min="1" value={item.quantity}
                             onChange={e => updateItem(index, 'quantity', e.target.value)}
-                            className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none disabled:bg-muted/50" />
+                            className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
                         </td>
                         <td className="px-3 py-2">
-                          <input type="number" min="0" step="0.01" value={item.unit_price} disabled={itemsLocked}
+                          <input type="number" min="0" step="0.01" value={item.unit_price}
                             onChange={e => updateItem(index, 'unit_price', e.target.value)}
-                            className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none disabled:bg-muted/50" />
+                            className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
                         </td>
                         <td className="px-3 py-2">
-                          <input type="number" min="0" max="100" step="0.5" value={item.discount_percent || 0} disabled={itemsLocked}
+                          <input type="number" min="0" max="100" step="0.5" value={item.discount_percent || 0}
                             onChange={e => updateItem(index, 'discount_percent', e.target.value)}
-                            className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none disabled:bg-muted/50" placeholder="0" />
+                            className="w-full border border-border rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500/20" placeholder="0" />
                         </td>
                         <td className="px-3 py-2 text-right text-sm font-semibold">
                           {formatCurrency(item.subtotal)}
@@ -452,24 +373,24 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
                           )}
                         </td>
                         <td className="px-2 py-2">
-                          {!itemsLocked && (
-                            <button type="button" onClick={() => removeItem(index)} className="text-red-500 hover:text-red-600">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
+                          <button type="button" onClick={() => removeItem(index)} className="text-red-500 hover:text-red-600">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+            ) : (
+              <div className="p-8 text-center text-sm text-muted-foreground border border-border rounded-lg">No items — search and add products above</div>
             )}
           </div>
 
           {/* Total */}
           <div className="flex justify-end bg-muted/30 rounded-lg p-3">
             <div className="text-right">
-              <p className="text-xs text-muted-foreground">Subtotal</p>
+              <p className="text-xs text-muted-foreground">New Subtotal</p>
               <p className="text-lg font-bold text-foreground">{formatCurrency(subtotal)}</p>
               {subtotal !== Number(invoice.total_amount) && (
                 <p className="text-[10px] text-blue-600">Was: {formatCurrency(Number(invoice.total_amount))}</p>
@@ -512,8 +433,4 @@ export default function EditInvoiceModal({ invoice, customers, products, onClose
       </div>
     </div>
   );
-}
-
-function o_originalQty(originalItems: EditItem[], index: number): number {
-  return originalItems[index]?.quantity || 0;
 }
