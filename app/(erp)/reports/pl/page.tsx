@@ -196,6 +196,51 @@ export default function PLPage() {
 
   return (
     <div className="space-y-5 animate-fade-in">
+      {/* P&L Explanation Panel */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 print:hidden">
+        <div className="flex items-start gap-3">
+          <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <Building2 className="w-4 h-4 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-bold text-blue-900 mb-2">How the Profit &amp; Loss Statement Works</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-blue-800">
+              <div className="space-y-2">
+                <div>
+                  <span className="font-semibold block">Sales Revenue</span>
+                  Sum of all non-cancelled invoices in the period (by invoice date).
+                </div>
+                <div>
+                  <span className="font-semibold block">Sales Returns &amp; Allowances</span>
+                  Net debit balance on account code 4050 from journal entries in the period. Deducted from gross revenue.
+                </div>
+                <div>
+                  <span className="font-semibold block">Cost of Goods Sold (COGS)</span>
+                  Net debit balance on account code 5000. Automatically posted when each invoice is created via the accounting trigger — records the cost of inventory items sold.
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div>
+                  <span className="font-semibold block">Gross Profit = Net Revenue − COGS</span>
+                  Profit before operating expenses. Shows whether your core selling activity is profitable.
+                </div>
+                <div>
+                  <span className="font-semibold block">Operating Expenses</span>
+                  Net debit on all expense accounts (except COGS 5000, Sales Returns 4050, Discount Given 4200) during the period. Includes salaries, rent, utilities, etc. logged in the Journal.
+                </div>
+                <div>
+                  <span className="font-semibold block">Net Profit = Gross Profit − Operating Expenses</span>
+                  The bottom line. Negative values mean a net loss for the period.
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-blue-600 mt-3 border-t border-blue-200 pt-2">
+              <strong>Period:</strong> Switch between This Month, This Quarter, or This Year using the selector above. All figures are filtered by the journal entry date and invoice date within the selected window.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between flex-wrap gap-3 print:hidden">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Profit &amp; Loss Statement</h1>

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
-import { ChartBar as BarChart3, TrendingUp, Package, Users, Download, FileSpreadsheet, Calendar, ArrowRight, RefreshCw, Printer } from 'lucide-react';
+import { ChartBar as BarChart3, TrendingUp, Package, Users, Download, FileSpreadsheet, Calendar, ArrowRight, RefreshCw, Printer, Info } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend, LineChart, Line
@@ -530,7 +530,29 @@ export default function ReportsPage() {
           )}
 
           {activeTab === 'pl' && (
-            <div className="bg-white rounded-xl border border-border shadow-sm max-w-3xl mx-auto overflow-hidden">
+            <div className="space-y-4 max-w-3xl mx-auto">
+              {/* How it works panel */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                <div className="flex items-start gap-3">
+                  <Info className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-blue-900 mb-1.5">How This P&amp;L Is Calculated</p>
+                    <div className="text-xs text-blue-800 space-y-1">
+                      <p><strong>Sales Revenue</strong> — total of all non-cancelled invoices (current year).</p>
+                      <p><strong>Sales Returns</strong> — deducted from revenue when sales return refunds are recorded.</p>
+                      <p><strong>COGS</strong> — auto-posted from inventory cost when each invoice is raised (account 5000).</p>
+                      <p><strong>Gross Profit</strong> = Net Revenue − COGS. Shows raw selling profitability.</p>
+                      <p><strong>Operating Expenses</strong> — journal entries posted to expense accounts (salaries, rent, utilities, etc.).</p>
+                      <p><strong>Net Profit</strong> = Gross Profit − Operating Expenses. The bottom line.</p>
+                    </div>
+                    <Link href="/reports/pl" className="inline-flex items-center gap-1 text-xs text-blue-600 font-semibold mt-2 hover:underline">
+                      View Full Statement <ArrowRight className="w-3 h-3" />
+                    </Link>
+                  </div>
+                </div>
+              </div>
+
+            <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
               <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-slate-700 to-slate-800">
                 <h3 className="text-lg font-bold text-white">Profit & Loss Statement</h3>
                 <Link href="/reports/pl" className="text-xs text-blue-300 hover:text-white hover:underline flex items-center gap-1">Full Statement <ArrowRight className="w-3 h-3" /></Link>
@@ -598,6 +620,7 @@ export default function ReportsPage() {
                 <span className="text-base font-bold text-white tracking-wide">NET PROFIT</span>
                 <span className="text-2xl font-bold text-white">{formatCurrency(stats.netProfit)}</span>
               </div>
+            </div>
             </div>
           )}
         </>

@@ -521,7 +521,9 @@ function CreateQuotationModal({ customers: initialCustomers, products, onClose, 
     setSaving(true);
     setError('');
 
-    const quoteNumber = `QT-${Date.now().toString().slice(-6)}`;
+    const { data: qNum, error: qNumError } = await supabase.rpc('generate_quotation_number');
+    if (qNumError) { setError('Failed to generate quotation number: ' + qNumError.message); setSaving(false); return; }
+    const quoteNumber = qNum as string;
 
     const { data: quote, error: quoteError } = await supabase
       .from('quotations')

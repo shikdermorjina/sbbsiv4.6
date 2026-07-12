@@ -226,6 +226,14 @@ function CustomerModal({ customer, onClose, onSaved }: { customer?: Customer | n
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (!isEdit && !form.code) {
+      supabase.rpc('generate_customer_code').then(({ data }) => {
+        if (data) setForm(f => ({ ...f, code: data as string }));
+      });
+    }
+  }, []);
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -271,7 +279,16 @@ function CustomerModal({ customer, onClose, onSaved }: { customer?: Customer | n
           {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
           <div className="grid grid-cols-2 gap-4">
             <div><label className="block text-xs font-medium mb-1">Customer Name *</label><input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" /></div>
-            <div><label className="block text-xs font-medium mb-1">Code *</label><input required value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} placeholder="CUS-XXX" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" /></div>
+            <div>
+              <label className="block text-xs font-medium mb-1">Customer Code</label>
+              <input
+                value={form.code}
+                readOnly={!isEdit}
+                onChange={e => isEdit && setForm({ ...form, code: e.target.value })}
+                placeholder="Auto-generated..."
+                className={`w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none ${!isEdit ? 'bg-gray-50 text-gray-500 cursor-default' : 'focus:ring-2 focus:ring-blue-500/20'}`}
+              />
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
