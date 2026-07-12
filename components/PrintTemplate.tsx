@@ -199,9 +199,9 @@ export default function PrintTemplate({
               src={logoSrc}
               alt="SI Building Solutions"
               style={{
-                height: '88px',
+                height: '96px',
                 width: 'auto',
-                maxWidth: '340px',
+                maxWidth: '380px',
                 objectFit: 'contain',
                 display: 'block',
               }}
@@ -602,7 +602,7 @@ export default function PrintTemplate({
           }}
         >
           {/* Terms & Conditions */}
-          <div style={{ padding: '16px 20px' }}>
+          <div style={{ padding: '12px 18px' }}>
             <div
               style={{
                 fontWeight: '800',
@@ -621,14 +621,15 @@ export default function PrintTemplate({
               style={{
                 fontSize: '11px',
                 color: '#444',
-                paddingLeft: '18px',
+                paddingLeft: '16px',
                 margin: 0,
-                lineHeight: '2',
+                lineHeight: '1.8',
+                listStyleType: 'decimal',
               }}
             >
-              <li>Goods once sold will not be taken back or exchanged.</li>
-              <li>Please check all items and quantities before leaving the store.</li>
-              <li>Any discrepancy must be reported within 24 hours.</li>
+              <li style={{ paddingLeft: '4px', marginBottom: '2px' }}>Please check all items and quantities before leaving the store.</li>
+              <li style={{ paddingLeft: '4px', marginBottom: '2px' }}>Any discrepancy must be reported within 24 hours.</li>
+              <li style={{ paddingLeft: '4px' }}>Payment is due as per agreed terms.</li>
             </ol>
             {notes && (
               <div style={{ marginTop: '8px', fontSize: '11px', color: '#666' }}>
@@ -642,7 +643,7 @@ export default function PrintTemplate({
             style={{
               borderLeft: '1px solid #dde3ef',
               borderRight: '1px solid #dde3ef',
-              padding: '16px 28px',
+              padding: '12px 24px',
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',
@@ -687,7 +688,7 @@ export default function PrintTemplate({
           {/* Signatures */}
           <div
             style={{
-              padding: '16px 20px',
+              padding: '12px 16px',
               display: 'grid',
               gridTemplateColumns: '1fr 1px 1fr',
               alignItems: 'end',

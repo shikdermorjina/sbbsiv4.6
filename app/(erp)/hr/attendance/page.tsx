@@ -3,7 +3,7 @@
 import { useEffect, useState, Fragment } from 'react';
 import { supabase } from '@/lib/supabase';
 import { toast } from '@/hooks/use-toast';
-import { ChevronLeft, ChevronRight, Search, CreditCard as Edit, CircleCheck as CheckCircle2, Circle as XCircle, Clock, Coffee, Umbrella, Users } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, CreditCard as Edit, Users, Calendar, TrendingUp } from 'lucide-react';
 
 interface Employee {
   id: string;
@@ -21,6 +21,15 @@ interface AttendanceRecord {
   check_out: string | null;
   status: 'present' | 'absent' | 'late' | 'half_day' | 'leave';
   notes: string | null;
+}
+
+interface MonthlySummary {
+  present: number;
+  late: number;
+  absent: number;
+  half_day: number;
+  leave: number;
+  total_days: number;
 }
 
 type AttendanceStatus = 'present' | 'absent' | 'late' | 'half_day' | 'leave';
@@ -41,10 +50,16 @@ const statusBadge: Record<AttendanceStatus, string> = {
   leave:    'text-purple-700 bg-purple-100',
 };
 
+/** Combine a date string (YYYY-MM-DD) with a time string (HH:MM) into an ISO timestamp. */
+function makeTimestamp(dateStr: string, timeStr: string): string {
+  return `${dateStr}T${timeStr}:00`;
+}
+
 export default function AttendancePage() {
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Map<string, AttendanceRecord>>(new Map());
+  const [monthlyData, setMonthlyData] = useState<Map<string, MonthlySummary>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterDept, setFilterDept] = useState('');
@@ -53,6 +68,7 @@ export default function AttendancePage() {
   const [editCheckIn, setEditCheckIn] = useState('');
   const [editCheckOut, setEditCheckOut] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  const [showSummary, setShowSummary] = useState(false);
 
   const today = new Date().toISOString().split('T')[0];
   const isToday = date === today;
@@ -69,7 +85,29 @@ export default function AttendancePage() {
     const map = new Map<string, AttendanceRecord>();
     (attRes.data || []).forEach((r: AttendanceRecord) => map.set(r.employee_id, r));
     setAttendance(map);
+    await loadMonthlySummary();
     setLoading(false);
+  }
+
+  async function loadMonthlySummary() {
+    const [year, month] = date.split('-');
+    const monthStart = `${year}-${month}-01`;
+    const nextMonth = month === '12' ? `${parseInt(year) + 1}-01-01` : `${year}-${String(parseInt(month) + 1).padStart(2, '0')}-01`;
+
+    const { data } = await supabase
+      .from('attendance')
+      .select('employee_id, status')
+      .gte('date', monthStart)
+      .lt('date', nextMonth);
+
+    const summary = new Map<string, MonthlySummary>();
+    (data || []).forEach((r: { employee_id: string; status: AttendanceStatus }) => {
+      const s = summary.get(r.employee_id) || { present: 0, late: 0, absent: 0, half_day: 0, leave: 0, total_days: 0 };
+      s[r.status]++;
+      s.total_days++;
+      summary.set(r.employee_id, s);
+    });
+    setMonthlyData(summary);
   }
 
   async function markAttendance(employeeId: string, status: AttendanceStatus) {
@@ -98,44 +136,89 @@ export default function AttendancePage() {
 
     if (updated) {
       setAttendance(prev => new Map(prev).set(employeeId, updated!));
+      await loadMonthlySummary();
     }
     setSavingId(null);
   }
 
   async function saveDetails(employeeId: string) {
-    const existing = attendance.get(employeeId);
-    if (!existing) return;
     setSavingId(employeeId);
+    const existing = attendance.get(employeeId);
 
-    const { data, error } = await supabase
-      .from('attendance')
-      .update({
-        check_in: editCheckIn || null,
-        check_out: editCheckOut || null,
-        notes: editNotes || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', existing.id)
-      .select()
-      .single();
+    const payload: Record<string, string | null> = {
+      notes: editNotes || null,
+    };
 
-    if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    } else if (data) {
-      setAttendance(prev => new Map(prev).set(employeeId, data));
+    // Combine date + time into full ISO timestamps for timestamptz columns
+    if (editCheckIn) {
+      payload.check_in = makeTimestamp(date, editCheckIn);
+    } else {
+      payload.check_in = null;
+    }
+    if (editCheckOut) {
+      payload.check_out = makeTimestamp(date, editCheckOut);
+    } else {
+      payload.check_out = null;
+    }
+
+    let updated: AttendanceRecord | null = null;
+
+    if (existing) {
+      const { data, error } = await supabase
+        .from('attendance')
+        .update({ ...payload, updated_at: new Date().toISOString() })
+        .eq('id', existing.id)
+        .select()
+        .single();
+      if (error) {
+        toast({ title: 'Error saving times', description: error.message, variant: 'destructive' });
+      } else {
+        updated = data;
+      }
+    } else {
+      // No existing record — create one with status 'present' and the times
+      const { data, error } = await supabase
+        .from('attendance')
+        .insert({
+          employee_id: employeeId,
+          date,
+          status: 'present' as AttendanceStatus,
+          ...payload,
+        })
+        .select()
+        .single();
+      if (error) {
+        toast({ title: 'Error saving times', description: error.message, variant: 'destructive' });
+      } else {
+        updated = data;
+      }
+    }
+
+    if (updated) {
+      setAttendance(prev => new Map(prev).set(employeeId, updated!));
       setEditingId(null);
-      toast({ title: 'Saved' });
+      toast({ title: 'Saved', description: 'Check-in/out times saved successfully' });
     }
     setSavingId(null);
   }
 
   function openEdit(emp: Employee) {
     const rec = attendance.get(emp.id);
-    if (!rec) return;
     setEditingId(emp.id);
-    setEditCheckIn(rec.check_in?.slice(0, 5) || '');
-    setEditCheckOut(rec.check_out?.slice(0, 5) || '');
-    setEditNotes(rec.notes || '');
+    // Extract HH:MM from timestamp or use defaults
+    if (rec?.check_in) {
+      const t = new Date(rec.check_in).toTimeString().slice(0, 5);
+      setEditCheckIn(t);
+    } else {
+      setEditCheckIn('09:00');
+    }
+    if (rec?.check_out) {
+      const t = new Date(rec.check_out).toTimeString().slice(0, 5);
+      setEditCheckOut(t);
+    } else {
+      setEditCheckOut('17:00');
+    }
+    setEditNotes(rec?.notes || '');
   }
 
   function navigateDate(delta: number) {
@@ -162,6 +245,9 @@ export default function AttendancePage() {
   const displayDate = new Date(date + 'T00:00:00').toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
+
+  const [year, month] = date.split('-');
+  const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -194,10 +280,21 @@ export default function AttendancePage() {
               Today
             </button>
           )}
+          <button
+            onClick={() => setShowSummary(s => !s)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition border ${
+              showSummary
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'border-border text-muted-foreground hover:bg-muted'
+            }`}
+          >
+            <TrendingUp className="w-3.5 h-3.5" />
+            Monthly Summary
+          </button>
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Daily Stats */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5">
         {[
           { key: 'present',  label: 'Present',   cls: 'text-green-700 bg-green-50 border-green-200' },
@@ -213,6 +310,70 @@ export default function AttendancePage() {
           </div>
         ))}
       </div>
+
+      {/* Monthly Summary Panel */}
+      {showSummary && (
+        <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
+          <div className="bg-muted/40 border-b border-border px-4 py-3 flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold text-foreground">Monthly Attendance Summary — {monthName}</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="text-left text-xs font-semibold text-muted-foreground px-4 py-3">Employee</th>
+                  <th className="text-center text-xs font-semibold text-muted-foreground px-3 py-3">Present</th>
+                  <th className="text-center text-xs font-semibold text-muted-foreground px-3 py-3">Late</th>
+                  <th className="text-center text-xs font-semibold text-muted-foreground px-3 py-3">Half Day</th>
+                  <th className="text-center text-xs font-semibold text-muted-foreground px-3 py-3">Leave</th>
+                  <th className="text-center text-xs font-semibold text-muted-foreground px-3 py-3">Absent</th>
+                  <th className="text-center text-xs font-semibold text-muted-foreground px-3 py-3">Total</th>
+                  <th className="text-center text-xs font-semibold text-muted-foreground px-3 py-3">Rate</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {loading ? (
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">Loading...</td></tr>
+                ) : employees.length === 0 ? (
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">No active employees</td></tr>
+                ) : (
+                  filtered.map(emp => {
+                    const s = monthlyData.get(emp.id) || { present: 0, late: 0, absent: 0, half_day: 0, leave: 0, total_days: 0 };
+                    const rate = s.total_days > 0
+                      ? Math.round(((s.present + s.late + s.half_day) / s.total_days) * 100)
+                      : 0;
+                    return (
+                      <tr key={emp.id} className="hover:bg-muted/20 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-700 font-bold text-xs shrink-0">
+                              {emp.full_name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="text-sm font-semibold text-foreground">{emp.full_name}</p>
+                              <p className="text-xs text-muted-foreground">{emp.employee_id}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="text-center px-3 py-3"><span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold text-green-700 bg-green-100">{s.present}</span></td>
+                        <td className="text-center px-3 py-3"><span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold text-amber-700 bg-amber-100">{s.late}</span></td>
+                        <td className="text-center px-3 py-3"><span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold text-blue-700 bg-blue-100">{s.half_day}</span></td>
+                        <td className="text-center px-3 py-3"><span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold text-purple-700 bg-purple-100">{s.leave}</span></td>
+                        <td className="text-center px-3 py-3"><span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold text-red-700 bg-red-100">{s.absent}</span></td>
+                        <td className="text-center px-3 py-3 text-sm font-bold text-foreground">{s.total_days}</td>
+                        <td className="text-center px-3 py-3">
+                          <span className={`text-sm font-bold ${rate >= 80 ? 'text-green-600' : rate >= 60 ? 'text-amber-600' : 'text-red-600'}`}>{rate}%</span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white rounded-xl border border-border p-3 shadow-sm flex flex-wrap gap-3">
@@ -235,7 +396,7 @@ export default function AttendancePage() {
         </select>
       </div>
 
-      {/* Table */}
+      {/* Daily Table */}
       <div className="bg-white rounded-xl border border-border shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -302,9 +463,9 @@ export default function AttendancePage() {
                           )}
                         </td>
                         <td className="px-4 py-3 hidden md:table-cell">
-                          {rec ? (
+                          {rec?.check_in || rec?.check_out ? (
                             <span className="text-xs text-muted-foreground">
-                              {rec.check_in ? rec.check_in.slice(0, 5) : '—'} / {rec.check_out ? rec.check_out.slice(0, 5) : '—'}
+                              {rec.check_in ? new Date(rec.check_in).toTimeString().slice(0, 5) : '—'} / {rec.check_out ? new Date(rec.check_out).toTimeString().slice(0, 5) : '—'}
                             </span>
                           ) : (
                             <span className="text-xs text-muted-foreground">—</span>
@@ -325,19 +486,17 @@ export default function AttendancePage() {
                                 {statusConfig[s].label}
                               </button>
                             ))}
-                            {rec && (
-                              <button
-                                onClick={() => isEditing ? setEditingId(null) : openEdit(emp)}
-                                title="Edit times & notes"
-                                className={`w-7 h-7 flex items-center justify-center rounded-lg border transition ${
-                                  isEditing
-                                    ? 'border-blue-500 bg-blue-100 text-blue-600'
-                                    : 'border-border text-muted-foreground hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
-                                }`}
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                              </button>
-                            )}
+                            <button
+                              onClick={() => isEditing ? setEditingId(null) : openEdit(emp)}
+                              title="Edit times & notes"
+                              className={`w-7 h-7 flex items-center justify-center rounded-lg border transition ${
+                                isEditing
+                                  ? 'border-blue-500 bg-blue-100 text-blue-600'
+                                  : 'border-border text-muted-foreground hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200'
+                              }`}
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </td>
                       </tr>
