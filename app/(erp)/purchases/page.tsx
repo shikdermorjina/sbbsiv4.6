@@ -487,7 +487,7 @@ function CreatePOModal({ suppliers, products, onClose, onSaved }: {
                 </thead>
                 <tbody className="divide-y divide-border">
                   {items.length === 0 ? (
-                    <tr><td colSpan={5} className="px-3 py-4 text-center text-xs text-muted-foreground">No items added. Click "Add Item" to add products.</td></tr>
+                    <tr><td colSpan={5} className="px-3 py-4 text-center text-xs text-muted-foreground">No items added. Click &quot;Add Item&quot; to add products.</td></tr>
                   ) : items.map((item, index) => (
                     <tr key={index}>
                       <td className="px-3 py-2">

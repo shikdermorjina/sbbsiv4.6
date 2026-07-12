@@ -873,7 +873,7 @@ function ProductModal({ categories, brands, warehouses, unitTypes, product, onCl
                     <p className="text-xs text-blue-800 flex items-start gap-2">
                       <Info className="w-4 h-4 shrink-0 mt-0.5" />
                       <span>
-                        <strong>How Multi-Unit Works:</strong> The <strong>Base Unit</strong> is your smallest tracked unit (conversion = 1). Each other unit's <strong>Conv.</strong> value says how many base units it contains.
+                        <strong>How Multi-Unit Works:</strong> The <strong>Base Unit</strong> is your smallest tracked unit (conversion = 1). Each other unit&apos;s <strong>Conv.</strong> value says how many base units it contains.
                         <br /><strong>Example for tiles:</strong>
                       </span>
                     </p>
@@ -1009,7 +1009,7 @@ function ProductModal({ categories, brands, warehouses, unitTypes, product, onCl
                     <p className="text-xs text-purple-800 flex items-start gap-2">
                       <Info className="w-4 h-4 shrink-0 mt-0.5" />
                       <span>
-                        <strong>Size Variants:</strong> Use for products sold in different sizes (e.g., towels in S/M/L, tiles in 12x12 or 24x24). The <strong>Dimensions</strong> field can store measurements like "60x60 cm".
+                        <strong>Size Variants:</strong> Use for products sold in different sizes (e.g., towels in S/M/L, tiles in 12x12 or 24x24). The <strong>Dimensions</strong> field can store measurements like &quot;60x60 cm&quot;.
                       </span>
                     </p>
                   </div>
@@ -1731,7 +1731,7 @@ Tiles Premium,TIL-050,Flooring,CeramicCo,sqft,25,45,100,500,,,Carton,20,800`;
                   </div>
                   <div className="p-3 bg-green-50 rounded-lg border">
                     <p className="text-xs font-semibold text-green-800 mb-1">Product with Colors/Sizes</p>
-                    <p className="text-xs text-green-600">Rows with same Name create ONE product with multiple variants. Use "Product Variants" mode.</p>
+                    <p className="text-xs text-green-600">Rows with same Name create ONE product with multiple variants. Use &quot;Product Variants&quot; mode.</p>
                     <pre className="mt-2 text-xs bg-white p-2 rounded border overflow-x-auto">Name,SKU,Cost Price,Sale Price,Color,Current Stock&#10;T-Shirt,TS-RED,100,150,Red,50&#10;T-Shirt,TS-BLU,100,150,Blue,30&#10;T-Shirt,TS-GRN,100,150,Green,20</pre>
                   </div>
                   <div className="p-3 bg-blue-50 rounded-lg border">
@@ -1964,7 +1964,7 @@ function ManageCatalogModal({ categories, brands, unitTypes, onClose, onSaved }:
                     Add
                   </button>
                 </div>
-                <p className="text-xs text-muted-foreground">Short name is the abbreviation shown on invoices (e.g. "pcs", "box", "ctn").</p>
+                <p className="text-xs text-muted-foreground">Short name is the abbreviation shown on invoices (e.g. &quot;pcs&quot;, &quot;box&quot;, &quot;ctn&quot;).</p>
               </div>
             ) : (
               <div className="space-y-2">

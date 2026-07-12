@@ -119,36 +119,49 @@ export default function PLPage() {
         .reduce((s: number, l: any) => s + Number(l.debit || 0) - Number(l.credit || 0), 0);
     }
 
-    // Service revenue (other operating revenue)
+    // Service revenue (other operating revenue) - with date filter
     let serviceRevenue = 0;
-    const revenueAccounts = (accountsRes.data || []).filter(a =>
-      a.account_type === 'revenue' && a.code !== '4000' && a.code !== '4100'
+    const revenueAccounts = (accountsRes.data || []).filter((a: any) =>
+      a.account_type === 'revenue' && a.code !== '4000'
     );
     for (const acc of revenueAccounts) {
-      const { data: lines } = await supabase.from('journal_lines').select('debit, credit').eq('account_id', acc.id);
-      const netCredit = (lines || []).reduce((s, l) => s + Number(l.credit || 0) - Number(l.debit || 0), 0);
+      const { data: lines } = await supabase
+        .from('journal_lines')
+        .select('debit, credit, journal_entry:journal_entries!inner(entry_date)')
+        .eq('account_id', acc.id);
+      const netCredit = (lines || [])
+        .filter((l: any) => { const d = l.journal_entry?.entry_date; return d && d >= startDate && d <= endDate; })
+        .reduce((s: any, l: any) => s + Number(l.credit || 0) - Number(l.debit || 0), 0);
       if (netCredit > 0) serviceRevenue += netCredit;
     }
 
     const totalRevenue = salesRevenue + serviceRevenue;
     const grossProfit = totalRevenue - costOfGoodsSold;
 
-    // Operating expenses - EXCLUDE cost_of_sales/COGS type accounts
+    // Operating expenses - exclude COGS, Sales Returns & Allowances (contra-revenue), and Sales Returns account
+    const EXCLUDED_CODES = new Set(['5000', '4050', '4200']); // COGS, Sales Returns & Allowances, Discount Given
     const expenseAccounts = (accountsRes.data || []).filter(a =>
-      a.account_type === 'expense' && a.account_type !== 'cost_of_sales'
+      a.account_type === 'expense' &&
+      !EXCLUDED_CODES.has(a.code) &&
+      !a.name.toLowerCase().includes('cost of goods') &&
+      !a.name.toLowerCase().includes('cogs') &&
+      !a.name.toLowerCase().includes('cost of sales') &&
+      !a.name.toLowerCase().includes('sales return')
     );
     const operatingExpenses: { name: string; amount: number }[] = [];
     let totalOperatingExpenses = 0;
 
     for (const acc of expenseAccounts) {
-      // Skip COGS-related accounts
-      if (acc.name.toLowerCase().includes('cost of goods') ||
-          acc.name.toLowerCase().includes('cogs') ||
-          acc.name.toLowerCase().includes('cost of sales')) {
-        continue;
-      }
-      const { data: lines } = await supabase.from('journal_lines').select('debit, credit').eq('account_id', acc.id);
-      const netDebit = (lines || []).reduce((s, l) => s + Number(l.debit || 0) - Number(l.credit || 0), 0);
+      const { data: lines } = await supabase
+        .from('journal_lines')
+        .select('debit, credit, journal_entry:journal_entries!inner(entry_date)')
+        .eq('account_id', acc.id);
+      const netDebit = (lines || [])
+        .filter((l: any) => {
+          const d = l.journal_entry?.entry_date;
+          return d && d >= startDate && d <= endDate;
+        })
+        .reduce((s: any, l: any) => s + Number(l.debit || 0) - Number(l.credit || 0), 0);
       if (netDebit > 0) {
         operatingExpenses.push({ name: acc.name, amount: netDebit });
         totalOperatingExpenses += netDebit;
@@ -164,14 +177,24 @@ export default function PLPage() {
     const otherExpenseAccounts = (accountsRes.data || []).filter(a => a.account_type === 'other_expense');
 
     for (const acc of otherIncomeAccounts) {
-      const { data: lines } = await supabase.from('journal_lines').select('debit, credit').eq('account_id', acc.id);
-      const net = (lines || []).reduce((s, l) => s + Number(l.credit || 0) - Number(l.debit || 0), 0);
+      const { data: lines } = await supabase
+        .from('journal_lines')
+        .select('debit, credit, journal_entry:journal_entries!inner(entry_date)')
+        .eq('account_id', acc.id);
+      const net = (lines || [])
+        .filter((l: any) => { const d = l.journal_entry?.entry_date; return d && d >= startDate && d <= endDate; })
+        .reduce((s: any, l: any) => s + Number(l.credit || 0) - Number(l.debit || 0), 0);
       if (net > 0) otherIncome += net;
     }
 
     for (const acc of otherExpenseAccounts) {
-      const { data: lines } = await supabase.from('journal_lines').select('debit, credit').eq('account_id', acc.id);
-      const net = (lines || []).reduce((s, l) => s + Number(l.debit || 0) - Number(l.credit || 0), 0);
+      const { data: lines } = await supabase
+        .from('journal_lines')
+        .select('debit, credit, journal_entry:journal_entries!inner(entry_date)')
+        .eq('account_id', acc.id);
+      const net = (lines || [])
+        .filter((l: any) => { const d = l.journal_entry?.entry_date; return d && d >= startDate && d <= endDate; })
+        .reduce((s: any, l: any) => s + Number(l.debit || 0) - Number(l.credit || 0), 0);
       if (net > 0) otherExpenses += net;
     }
 

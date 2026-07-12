@@ -32,6 +32,7 @@ export default function ReportsPage() {
     inventoryValue: 0,
     cogsActual: 0,
     salesReturnsTotal: 0,
+    totalOperatingExpenses: 0,
   });
   const [monthlyData, setMonthlyData] = useState<{ month: string; sales: number; purchases: number; profit: number }[]>([]);
   const [categoryData, setCategoryData] = useState<{ name: string; revenue: number; color: string }[]>([]);
@@ -96,8 +97,29 @@ export default function ReportsPage() {
       }).reduce((s: number, l: any) => s + Number(l.debit || 0) - Number(l.credit || 0), 0);
     }
 
+    // Operating Expenses from Chart of Accounts (exclude COGS, Sales Returns, Discount Given)
+    const OPEX_EXCLUDED = new Set(['5000', '4050', '4200']);
+    const opexAccounts = (accountsRes.data || []).filter((a: any) =>
+      a.account_type === 'expense' &&
+      !OPEX_EXCLUDED.has(a.code) &&
+      !a.name.toLowerCase().includes('cost of goods') &&
+      !a.name.toLowerCase().includes('sales return')
+    );
+    let totalOperatingExpenses = 0;
+    for (const acc of opexAccounts) {
+      const { data: opexLines } = await supabase
+        .from('journal_lines')
+        .select('debit, credit, journal_entry:journal_entries!inner(entry_date)')
+        .eq('account_id', acc.id);
+      const netDebit = (opexLines || []).filter((l: any) => {
+        const d = l.journal_entry?.entry_date;
+        return d && d >= effectiveStart && (!effectiveEnd || d <= effectiveEnd);
+      }).reduce((s: number, l: any) => s + Number(l.debit || 0) - Number(l.credit || 0), 0);
+      totalOperatingExpenses += Math.max(0, netDebit);
+    }
+
     const grossProfit = totalRevenue - salesReturnsTotal - cogsActual;
-    const netProfit = grossProfit - Math.max(0, grossProfit) * 0.15;
+    const netProfit = grossProfit - totalOperatingExpenses;
     const inventoryValue = (invItemsRes.data || []).reduce((s: number, item: any) => s + (Number(item.quantity_on_hand) * Number(item.product?.cost_price || 0)), 0);
 
     setStats({
@@ -111,6 +133,7 @@ export default function ReportsPage() {
       inventoryValue,
       cogsActual,
       salesReturnsTotal,
+      totalOperatingExpenses,
     });
 
     const productMap: Record<string, { name: string; sales: number; revenue: number; cost: number; unit?: string }> = {};
@@ -551,23 +574,23 @@ export default function ReportsPage() {
                 <span className="text-lg font-bold text-green-700">{formatCurrency(stats.grossProfit)}</span>
               </div>
 
-              {/* Operating Expenses */}
+              {/* Operating Expenses from Chart of Accounts */}
               <div className="px-6 py-2 bg-red-50 border-b border-border">
                 <span className="text-xs font-bold text-red-700 tracking-wide">OPERATING EXPENSES</span>
               </div>
               <div className="flex justify-between items-center px-6 py-2 border-b border-gray-100">
-                <span className="text-sm text-gray-700">Operating Expenses (Est.)</span>
-                <span className="text-sm font-medium text-red-600">({formatCurrency(Math.max(0, stats.grossProfit) * 0.15)})</span>
+                <span className="text-sm text-gray-700">Operating Expenses</span>
+                <span className="text-sm font-medium text-red-600">({formatCurrency(stats.totalOperatingExpenses)})</span>
               </div>
               <div className="flex justify-between items-center px-6 py-2 bg-red-50 border-b border-border">
                 <span className="text-sm font-semibold text-gray-800">Total Operating Expenses</span>
-                <span className="text-sm font-bold text-red-800">({formatCurrency(Math.max(0, stats.grossProfit) * 0.15)})</span>
+                <span className="text-sm font-bold text-red-800">({formatCurrency(stats.totalOperatingExpenses)})</span>
               </div>
 
               {/* Operating Profit */}
               <div className="flex justify-between items-center px-6 py-3 bg-green-50 border-b border-border">
                 <span className="text-sm font-bold text-gray-800">OPERATING PROFIT</span>
-                <span className="text-lg font-bold text-green-700">{formatCurrency(stats.grossProfit - Math.max(0, stats.grossProfit) * 0.15)}</span>
+                <span className="text-lg font-bold text-green-700">{formatCurrency(stats.grossProfit - stats.totalOperatingExpenses)}</span>
               </div>
 
               {/* Net Profit */}

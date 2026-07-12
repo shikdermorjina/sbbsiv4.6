@@ -2009,9 +2009,14 @@ function CancelInvoiceModal({ invoice, onClose, onDone }: { invoice: any; onClos
               <div className="text-sm text-amber-800">
                 <p className="font-semibold mb-1">This action will reverse all effects of this invoice:</p>
                 <ul className="list-disc list-inside space-y-0.5 text-xs">
-                  <li>Stock will be restored to inventory</li>
+                  <li>Stock will be restored to inventory (net of any returned quantities)</li>
                   <li>Journal entries (AR, Revenue, COGS) will be reversed</li>
                   {Number(invoice.amount_paid) > 0 && <li>Payments of {formatCurrency(Number(invoice.amount_paid))} will be reversed</li>}
+                  {invoice.sales_returns && invoice.sales_returns.length > 0 && (
+                    <li className="font-semibold text-red-700">
+                      {invoice.sales_returns.length} linked sales return{invoice.sales_returns.length > 1 ? 's' : ''} will also be voided and their journal entries reversed
+                    </li>
+                  )}
                   <li>Customer outstanding balance will be updated</li>
                   <li>This action is recorded in the audit trail</li>
                 </ul>

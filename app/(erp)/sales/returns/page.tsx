@@ -932,7 +932,7 @@ function ReturnModal({ invoices, onClose, onSaved }: {
                         {isOnCredit ? (
                           <p>This is an on-credit sale. The customer has not paid yet, so no refund can be issued until payment is received.</p>
                         ) : (
-                          <p>Refund exceeds the customer's paid amount ({formatCurrency(maxRefundable)}). The refund will be capped at {formatCurrency(cappedRefundAmount)}.</p>
+                          <p>Refund exceeds the customer&apos;s paid amount ({formatCurrency(maxRefundable)}). The refund will be capped at {formatCurrency(cappedRefundAmount)}.</p>
                         )}
                       </div>
                     </div>
