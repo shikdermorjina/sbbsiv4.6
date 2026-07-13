@@ -857,6 +857,7 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [customerList, setCustomerList] = useState(customers);
   const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
+  const [formTab, setFormTab] = useState<'items' | 'cost'>('items');
 
   useEffect(() => {
     supabase.from('payment_methods').select('code, name').eq('is_active', true).order('sort_order')
@@ -927,6 +928,7 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
         ...updated[index],
         selected_unit: unit,
         unit_price: unit.price,
+        cost_price: unit.cost_price || updated[index].cost_price || 0,
         base_quantity: newBaseQty,
       };
     } else if (field === 'quantity') {
@@ -1024,6 +1026,30 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
     const { error: itemsError } = await supabase.from('invoice_items').insert(invoiceItems);
     if (itemsError) { setError(itemsError.message); setSaving(false); return; }
 
+    // Record cost price history snapshot for each item at time of sale
+    const costHistoryRecords = items.map(item => {
+      const unitName = item.selected_unit?.unit_name || item.product_unit || 'pcs';
+      const convFactor = item.selected_unit?.conversion_factor || 1;
+      const costPerUnit = item.cost_price || 0;
+      const totalCostAdded = costPerUnit * item.quantity;
+      return {
+        product_id: item.product_id,
+        product_name: item.product_name,
+        product_sku: item.product_sku || '',
+        invoice_id: invoice.id,
+        unit: unitName,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        cost_price_per_qty: costPerUnit,
+        cost_price_for_added_qty: totalCostAdded,
+        total_cost_price_single: costPerUnit,
+        total_cost_price_added: totalCostAdded,
+      };
+    });
+    if (costHistoryRecords.length > 0) {
+      await supabase.from('cost_price_history').insert(costHistoryRecords);
+    }
+
     // Record payment if full or partial
     if (amountPaid > 0) {
       const { data: payNum } = await supabase.rpc('generate_payment_number');
@@ -1105,6 +1131,26 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
           </div>
 
           <div>
+            <div className="flex items-center gap-1 mb-3 border-b border-border">
+              <button
+                type="button"
+                onClick={() => setFormTab('items')}
+                className={`px-3 py-2 text-xs font-semibold border-b-2 -mb-px transition ${formTab === 'items' ? 'border-blue-600 text-blue-600' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+              >
+                Line Items
+              </button>
+              <button
+                type="button"
+                onClick={() => setFormTab('cost')}
+                className={`px-3 py-2 text-xs font-semibold border-b-2 -mb-px transition flex items-center gap-1.5 ${formTab === 'cost' ? 'border-blue-600 text-blue-600' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+              >
+                Cost Price History
+                {items.length > 0 && <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${formTab === 'cost' ? 'bg-blue-100 text-blue-700' : 'bg-muted text-muted-foreground'}`}>{items.length}</span>}
+              </button>
+            </div>
+
+            {formTab === 'items' && (
+            <>
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-medium">Line Items</label>
               {items.length > 0 && <span className="text-xs text-muted-foreground">{items.length} item{items.length !== 1 ? 's' : ''}</span>}
@@ -1187,6 +1233,70 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
                 </tbody>
               </table>
             </div>
+            )}
+            </>
+            )}
+
+            {formTab === 'cost' && (
+              <div className="space-y-3">
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
+                  This tab records the cost price of each product in this invoice at the time of sale. When the invoice is saved, this snapshot is stored permanently in the cost price history for future reference.
+                </div>
+                {items.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <p className="text-sm">No products added yet. Add products in the Line Items tab to see their cost prices.</p>
+                  </div>
+                ) : (
+                  <div className="border border-border rounded-lg overflow-hidden">
+                    <table className="w-full">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Product</th>
+                          <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Unit</th>
+                          <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2">Qty</th>
+                          <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2">Cost / 1 Qty</th>
+                          <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2">Total Cost (Single)</th>
+                          <th className="text-right text-xs font-semibold text-muted-foreground px-3 py-2">Total Cost (Added Qty)</th>
+                          <th className="text-left text-xs font-semibold text-muted-foreground px-3 py-2">Recorded At</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {items.map((item, index) => {
+                          const unitName = item.selected_unit?.unit_name || item.product_unit || 'pcs';
+                          const convFactor = item.selected_unit?.conversion_factor || 1;
+                          const costPerUnit = item.cost_price || 0;
+                          const costPerBase = convFactor > 0 ? costPerUnit / convFactor : costPerUnit;
+                          const totalCostSingle = costPerUnit;
+                          const totalCostAdded = costPerUnit * item.quantity;
+                          return (
+                            <tr key={index} className="hover:bg-muted/20">
+                              <td className="px-3 py-2">
+                                <p className="text-sm font-medium text-foreground">{item.product_name}</p>
+                                <p className="text-[10px] text-muted-foreground">{item.product_sku}</p>
+                              </td>
+                              <td className="px-3 py-2 text-sm text-foreground">{unitName}</td>
+                              <td className="px-3 py-2 text-right text-sm text-foreground">{item.quantity}</td>
+                              <td className="px-3 py-2 text-right text-sm text-foreground">{formatCurrency(costPerUnit)}</td>
+                              <td className="px-3 py-2 text-right text-sm text-foreground">{formatCurrency(totalCostSingle)}</td>
+                              <td className="px-3 py-2 text-right text-sm font-semibold text-foreground">{formatCurrency(totalCostAdded)}</td>
+                              <td className="px-3 py-2 text-xs text-muted-foreground">{new Date().toLocaleString()}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot className="bg-muted/30">
+                        <tr>
+                          <td colSpan={5} className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">Total Cost:</td>
+                          <td className="px-3 py-2 text-right text-sm font-bold text-foreground">
+                            {formatCurrency(items.reduce((s, i) => s + (i.cost_price || 0) * i.quantity, 0))}
+                          </td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 

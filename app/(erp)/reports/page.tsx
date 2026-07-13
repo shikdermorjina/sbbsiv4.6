@@ -47,20 +47,35 @@ export default function ReportsPage() {
     const effectiveStart = dateFrom || startDate;
     const effectiveEnd = dateTo || endDate || undefined;
 
+    // Supabase caps queries at 1000 rows by default. Paginate inventory_items to fetch all.
     const [
-      invoicesRes, purchasesRes, customersRes, productsRes, invItemsRes,
+      invoicesRes, purchasesRes, customersRes, productsRes,
       topProductsRes, topCustomersRes, paymentsRes, accountsRes
     ] = await Promise.all([
       supabase.from('invoices').select('total_amount, subtotal, invoice_date, status').gte('invoice_date', effectiveStart).lte('invoice_date', effectiveEnd || undefined).neq('status', 'cancelled'),
       supabase.from('purchase_orders').select('total_amount').gte('order_date', effectiveStart).lte('order_date', effectiveEnd || undefined),
       supabase.from('customers').select('total_purchases'),
       supabase.from('products').select('id, unit'),
-      supabase.from('inventory_items').select('quantity_on_hand, product:products(cost_price)'),
       supabase.from('invoice_items').select('product_id, quantity, subtotal, unit_name, product:products(name, cost_price)').gte('created_at', effectiveStart).lte('created_at', effectiveEnd || undefined).order('quantity', { ascending: false }).limit(50),
       supabase.from('customers').select('name, total_purchases').order('total_purchases', { ascending: false }).limit(10),
       supabase.from('payments').select('amount').eq('payment_type', 'received').gte('payment_date', effectiveStart).lte('payment_date', effectiveEnd || undefined),
       supabase.from('accounts').select('id, code, name, account_type').eq('is_active', true),
     ]);
+
+    let allInvItems: any[] = [];
+    {
+      let pg = 0;
+      while (true) {
+        const { data: pageData } = await supabase
+          .from('inventory_items')
+          .select('quantity_on_hand, product:products(cost_price)')
+          .range(pg * 1000, (pg + 1) * 1000 - 1);
+        allInvItems = allInvItems.concat(pageData || []);
+        if (!pageData || pageData.length < 1000) break;
+        pg++;
+      }
+    }
+    const invItemsRes = { data: allInvItems };
 
     const totalRevenue = (invoicesRes.data || []).reduce((s: number, i: any) => s + Number(i.total_amount), 0);
     const totalPurchases = (purchasesRes.data || []).reduce((s: number, p: any) => s + Number(p.total_amount), 0);

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
 import { Package, TriangleAlert as AlertTriangle, TrendingDown, ChartBar as BarChart3, Download, RefreshCw, Search } from 'lucide-react';
+import Pagination from '@/components/ui/AppPagination';
 
 export default function InventoryReportPage() {
   const [items, setItems] = useState<any[]>([]);
@@ -14,22 +15,38 @@ export default function InventoryReportPage() {
   const [filterCategory, setFilterCategory] = useState('');
   const [warehouses, setWarehouses] = useState<{ id: string; name: string }[]>([]);
   const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
 
   useEffect(() => {
     async function load() {
-      const [invRes, whRes, catRes] = await Promise.all([
-        supabase.from('inventory_items').select('*, product:products(name, sku, unit, cost_price, sale_price, min_stock_level, category:categories(id, name)), warehouse:warehouses(id, name)'),
+      const [whRes, catRes] = await Promise.all([
         supabase.from('warehouses').select('id, name').eq('is_active', true).order('name'),
         supabase.from('categories').select('id, name').eq('is_active', true).order('name'),
       ]);
-      const items = invRes.data || [];
-      setItems(items);
+
+      // Supabase caps queries at 1000 rows by default. Paginate to fetch all inventory_items.
+      let allItems: any[] = [];
+      {
+        let pg = 0;
+        while (true) {
+          const { data: pageData } = await supabase
+            .from('inventory_items')
+            .select('*, product:products(name, sku, unit, cost_price, sale_price, min_stock_level, category:categories(id, name)), warehouse:warehouses(id, name)')
+            .range(pg * 1000, (pg + 1) * 1000 - 1);
+          allItems = allItems.concat(pageData || []);
+          if (!pageData || pageData.length < 1000) break;
+          pg++;
+        }
+      }
+
+      setItems(allItems);
       setWarehouses(whRes.data || []);
       setCategories(catRes.data || []);
-      const value = items.reduce((s: number, i: any) => s + Number(i.quantity_on_hand) * Number(i.product?.cost_price || 0), 0);
-      const low = items.filter((i: any) => i.quantity_on_hand > 0 && i.quantity_on_hand <= (i.product?.min_stock_level || 0)).length;
-      const out = items.filter((i: any) => i.quantity_on_hand === 0).length;
-      setStats({ total: items.length, value, lowStock: low, outOfStock: out });
+      const value = allItems.reduce((s: number, i: any) => s + Number(i.quantity_on_hand) * Number(i.product?.cost_price || 0), 0);
+      const low = allItems.filter((i: any) => i.quantity_on_hand > 0 && i.quantity_on_hand <= (i.product?.min_stock_level || 0)).length;
+      const out = allItems.filter((i: any) => i.quantity_on_hand === 0).length;
+      setStats({ total: allItems.length, value, lowStock: low, outOfStock: out });
       setLoading(false);
     }
     load();
@@ -41,6 +58,13 @@ export default function InventoryReportPage() {
     const matchCat = !filterCategory || item.product?.category?.id === filterCategory;
     return matchSearch && matchWh && matchCat;
   });
+
+  const totalFiltered = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pagedItems = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
+
+  useEffect(() => { setPage(1); }, [search, filterWarehouse, filterCategory]);
 
   function exportToCSV() {
     const csv = 'Product,SKU,Category,Warehouse,On Hand,Unit,Value\n' + filtered.map(i => `"${i.product?.name || ''}","${i.product?.sku || ''}","${i.product?.category?.name || ''}","${i.warehouse?.name || ''}",${i.quantity_on_hand},"${i.product?.unit || 'pcs'}",${i.quantity_on_hand * Number(i.product?.cost_price || 0)}`).join('\n');
@@ -99,9 +123,9 @@ export default function InventoryReportPage() {
             </tr></thead>
             <tbody className="divide-y divide-border">
               {loading ? Array.from({length: 8}).map((_, i) => <tr key={i}>{Array.from({length: 8}).map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-muted rounded animate-pulse" /></td>)}</tr>) :
-                filtered.length === 0 ? (
+                totalFiltered === 0 ? (
                   <tr><td colSpan={8} className="px-4 py-12 text-center text-muted-foreground text-sm">No items found</td></tr>
-                ) : filtered.map((item: any) => {
+                ) : pagedItems.map((item: any) => {
                   const avail = item.quantity_on_hand - (item.quantity_reserved || 0);
                   const value = item.quantity_on_hand * Number(item.product?.cost_price || 0);
                   const isLow = item.quantity_on_hand <= (item.product?.min_stock_level || 0) && item.quantity_on_hand > 0;
@@ -123,6 +147,13 @@ export default function InventoryReportPage() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={safePage}
+          pageSize={pageSize}
+          total={totalFiltered}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
       </div>
     </div>
   );
