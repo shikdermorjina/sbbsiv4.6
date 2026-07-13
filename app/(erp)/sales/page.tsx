@@ -195,12 +195,12 @@ export default function SalesPage() {
     if (!del) { toast({ title: 'Error', description: 'Delivery not found', variant: 'destructive' }); return; }
 
     const { data: invItems } = del.invoice_id
-      ? await supabase.from('invoice_items').select('quantity, unit_name, product:products(name, sku)').eq('invoice_id', del.invoice_id)
+      ? await supabase.from('invoice_items').select('quantity, unit_name, product:products(name, sku, unit)').eq('invoice_id', del.invoice_id)
       : { data: null };
 
     const { data: delItems } = await supabase
       .from('delivery_items')
-      .select('quantity, delivered_quantity, unit_name, product:products(name, sku)')
+      .select('quantity, delivered_quantity, unit_name, product:products(name, sku, unit)')
       .eq('delivery_id', deliveryId);
 
     const items = (delItems && delItems.length > 0 ? delItems : invItems || []).map((item: any) => ({
@@ -208,7 +208,7 @@ export default function SalesPage() {
       product_sku: item.product?.sku,
       quantity: Number(item.quantity),
       delivered_quantity: Number(item.delivered_quantity ?? item.quantity),
-      unit_name: item.unit_name,
+      unit_name: item.unit_name || item.product?.unit || null,
     }));
 
     setViewingChallan({ delivery: del, items, invoiceNumber: del.invoice?.invoice_number });
@@ -317,7 +317,7 @@ export default function SalesPage() {
                 unit_price: item.unit_price,
                 discount_percent: item.discount_percent || 0,
                 subtotal: item.subtotal,
-                unit_name: item.unit_name,
+                unit_name: item.unit_name || item.product?.unit || null,
               }))}
               subtotal={Number(invoice.subtotal)}
               discountTotal={discountTotal}
@@ -1008,7 +1008,7 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
       discount_percent: item.discount_percent || 0,
       tax_rate: 0,
       subtotal: item.quantity * item.unit_price * (1 - (item.discount_percent || 0) / 100),
-      unit_name: item.selected_unit?.unit_name,
+      unit_name: item.selected_unit?.unit_name || item.product_unit || null,
       unit_conversion_factor: item.selected_unit?.conversion_factor,
       base_quantity: item.base_quantity,
     }));

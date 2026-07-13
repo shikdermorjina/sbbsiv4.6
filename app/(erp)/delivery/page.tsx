@@ -65,7 +65,7 @@ export default function DeliveryPage() {
     if (delivery.invoice_id) {
       const { data: invItems } = await supabase
         .from('invoice_items')
-        .select('quantity, unit_name, product:products(name, sku)')
+        .select('quantity, unit_name, product:products(name, sku, unit)')
         .eq('invoice_id', delivery.invoice_id);
 
       if (invItems && invItems.length > 0) {
@@ -74,13 +74,13 @@ export default function DeliveryPage() {
           product_sku: item.product?.sku,
           quantity: Number(item.quantity),
           delivered_quantity: Number(item.quantity),
-          unit_name: item.unit_name,
+          unit_name: item.unit_name || item.product?.unit || null,
         })));
       }
     } else {
       const { data: delItems } = await supabase
         .from('delivery_items')
-        .select('quantity, delivered_quantity, unit_name, product:products(name, sku)')
+        .select('quantity, delivered_quantity, unit_name, product:products(name, sku, unit)')
         .eq('delivery_id', delivery.id);
 
       if (delItems && delItems.length > 0) {
@@ -89,7 +89,7 @@ export default function DeliveryPage() {
           product_sku: item.product?.sku,
           quantity: Number(item.quantity),
           delivered_quantity: Number(item.delivered_quantity ?? item.quantity),
-          unit_name: item.unit_name,
+          unit_name: item.unit_name || item.product?.unit || null,
         })));
       }
     }

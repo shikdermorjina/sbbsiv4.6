@@ -554,7 +554,7 @@ function CreateQuotationModal({ customers: initialCustomers, products, onClose, 
         discount_percent: item.discount_percent,
         tax_rate: 0,
         subtotal: item.quantity * item.unit_price - discount,
-        unit_name: item.selected_unit?.unit_name,
+        unit_name: item.selected_unit?.unit_name || (item as any).product_unit || null,
         unit_conversion_factor: item.selected_unit?.conversion_factor,
         base_quantity: item.base_quantity,
       };
@@ -1092,7 +1092,7 @@ function ViewQuotationModal({ quotation, items, onClose, onConvert, companySetti
               unit_price: item.unit_price,
               discount_percent: item.discount_percent || 0,
               subtotal: item.subtotal,
-              unit_name: item.unit_name,
+              unit_name: item.unit_name || item.product?.unit || null,
             }))}
             subtotal={Number(quotation.subtotal)}
             discountTotal={items.reduce((s, item: any) => s + (item.quantity * item.unit_price * (item.discount_percent || 0) / 100), 0)}

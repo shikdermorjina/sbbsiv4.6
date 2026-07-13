@@ -118,8 +118,8 @@ export default function ReportsPage() {
       totalOperatingExpenses += Math.max(0, netDebit);
     }
 
-    const grossProfit = totalRevenue - salesReturnsTotal - cogsActual;
-    const netProfit = grossProfit - totalOperatingExpenses;
+    const grossProfit = totalRevenue - Math.max(0, salesReturnsTotal) - Math.abs(cogsActual);
+    const netProfit = grossProfit - Math.max(0, totalOperatingExpenses);
     const inventoryValue = (invItemsRes.data || []).reduce((s: number, item: any) => s + (Number(item.quantity_on_hand) * Number(item.product?.cost_price || 0)), 0);
 
     setStats({

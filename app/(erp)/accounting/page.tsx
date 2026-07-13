@@ -225,13 +225,15 @@ export default function AccountingPage() {
   // Revenue net of contra-revenue (Sales Returns 4050, Discount Given 4200) and COGS (5000)
   const CONTRA_REVENUE_CODES = new Set(['4050', '4200', '5000']);
   const netRevenue = revenue.reduce((s, a) => s + Number(a.balance), 0);
-  const netExpenses = expenses
+  const operatingExpenses = expenses
     .filter(a => !CONTRA_REVENUE_CODES.has(a.code))
     .reduce((s, a) => s + Number(a.balance), 0);
+  // COGS account balance can be negative if credits > debits (reversals). Use absolute net debit.
   const cogsBalance = expenses.filter(a => a.code === '5000').reduce((s, a) => s + Number(a.balance), 0);
   const salesReturnsBalance = expenses.filter(a => a.code === '4050').reduce((s, a) => s + Number(a.balance), 0);
-  const grossProfit = netRevenue - salesReturnsBalance - cogsBalance;
-  const netProfit = grossProfit - netExpenses;
+  // Gross profit: revenue minus COGS (use absolute value — positive balance = cost incurred)
+  const grossProfit = netRevenue - Math.max(0, salesReturnsBalance) - Math.abs(cogsBalance);
+  const netProfit = grossProfit - Math.max(0, operatingExpenses);
 
   useEffect(() => {
     async function loadMonthlyData() {

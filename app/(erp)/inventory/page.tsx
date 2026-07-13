@@ -485,6 +485,8 @@ function ProductModal({ categories, brands, warehouses, unitTypes, product, onCl
   const [stockByWarehouse, setStockByWarehouse] = useState<Record<string, string>>(
     warehouses.reduce((acc, w) => ({ ...acc, [w.id]: '0' }), {})
   );
+  // Tracks the original DB stock to compute diffs accurately (not the stale prop)
+  const originalStockRef = useRef<Record<string, number>>({});
   const [colors, setColors] = useState<ProductColor[]>([]);
   const [sizes, setSizes] = useState<ProductSize[]>([]);
   const [units, setUnits] = useState<ProductUnit[]>([]);
@@ -513,11 +515,14 @@ function ProductModal({ categories, brands, warehouses, unitTypes, product, onCl
 
     // Load current stock by warehouse
     const stockMap: Record<string, string> = {};
-    warehouses.forEach(w => { stockMap[w.id] = '0'; });
+    const origMap: Record<string, number> = {};
+    warehouses.forEach(w => { stockMap[w.id] = '0'; origMap[w.id] = 0; });
     (invRes.data || []).forEach(inv => {
       stockMap[inv.warehouse_id] = String(inv.quantity_on_hand);
+      origMap[inv.warehouse_id] = Number(inv.quantity_on_hand);
     });
     setStockByWarehouse(stockMap);
+    originalStockRef.current = origMap;
   }
 
   function addColor() {
@@ -730,7 +735,8 @@ function ProductModal({ categories, brands, warehouses, unitTypes, product, onCl
           // Handle stock adjustments for existing products
           for (const [warehouseId, newQtyStr] of Object.entries(stockByWarehouse)) {
             const newQty = Number(newQtyStr);
-            const currentQty = product?.stock_by_warehouse?.find(s => s.warehouse_id === warehouseId)?.quantity || 0;
+            // Use freshly-loaded DB values (originalStockRef), not the stale product prop
+            const currentQty = originalStockRef.current[warehouseId] ?? 0;
             const diff = newQty - currentQty;
 
             if (diff !== 0) {
