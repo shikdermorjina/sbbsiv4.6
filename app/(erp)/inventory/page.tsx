@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation';
 import JsBarcode from 'jsbarcode';
 import { Package, Plus, Search, CreditCard as Edit, Trash2, TriangleAlert as AlertTriangle, ChartBar as BarChart3, Boxes, TrendingDown, RefreshCw, X, Warehouse, Palette, Ruler, ChevronDown, ChevronUp, ChevronRight, Info, Settings, Barcode, Camera, Printer, Download, Upload, CircleCheck as CheckCircle2 } from 'lucide-react';
 import type { Product, Category, Brand, Warehouse as WarehouseType, ProductColor, ProductSize, ProductUnit } from '@/lib/types';
+import Pagination from '@/components/ui/AppPagination';
 
 function StockByWarehouse({ productId, warehouses, inventoryByWarehouse, unit }: { productId: string; warehouses: WarehouseType[]; inventoryByWarehouse: Record<string, Record<string, number>>; unit?: string }) {
   const stockByWh = inventoryByWarehouse[productId] || {};
@@ -55,6 +56,8 @@ export default function InventoryPage() {
   const [filterUnit, setFilterUnit] = useState('');
   const [allColors, setAllColors] = useState<{ id: string; name: string; hex_code: string }[]>([]);
   const [allSizes, setAllSizes] = useState<{ id: string; name: string }[]>([]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<ProductWithStock | null>(null);
   const [deletingProduct, setDeletingProduct] = useState<ProductWithStock | null>(null);
@@ -85,10 +88,24 @@ export default function InventoryPage() {
       page++;
     }
 
-    const [catRes, brandRes, invRes, whRes, colorRes, sizeRes, unitTypeRes] = await Promise.all([
+    // Paginate inventory_items to avoid the 1000-row default cap
+    let allInvItems: any[] = [];
+    {
+      let pg = 0;
+      while (true) {
+        const { data: invPage } = await supabase
+          .from('inventory_items')
+          .select('product_id, warehouse_id, quantity_on_hand')
+          .range(pg * 1000, (pg + 1) * 1000 - 1);
+        allInvItems = allInvItems.concat(invPage || []);
+        if (!invPage || invPage.length < 1000) break;
+        pg++;
+      }
+    }
+
+    const [catRes, brandRes, whRes, colorRes, sizeRes, unitTypeRes] = await Promise.all([
       supabase.from('categories').select('*').eq('is_active', true),
       supabase.from('brands').select('*').eq('is_active', true),
-      supabase.from('inventory_items').select('product_id, warehouse_id, quantity_on_hand'),
       supabase.from('warehouses').select('*').eq('is_active', true).order('is_default', { ascending: false }),
       supabase.from('product_colors').select('id, name, hex_code').order('name'),
       supabase.from('product_sizes').select('id, name').order('name'),
@@ -97,7 +114,7 @@ export default function InventoryPage() {
 
     const stockMap: Record<string, number> = {};
     const byWarehouse: Record<string, Record<string, number>> = {};
-    (invRes.data || []).forEach((i: any) => {
+    allInvItems.forEach((i: any) => {
       stockMap[i.product_id] = (stockMap[i.product_id] || 0) + Number(i.quantity_on_hand);
       if (!byWarehouse[i.product_id]) byWarehouse[i.product_id] = {};
       byWarehouse[i.product_id][i.warehouse_id] = Number(i.quantity_on_hand);
@@ -160,6 +177,9 @@ export default function InventoryPage() {
     const matchUnit = !filterUnit || (p.unit && p.unit.toLowerCase() === filterUnit.toLowerCase());
     return matchSearch && matchCat && matchBrand && matchWarehouse && matchStatus && matchColor && matchSize && matchUnit;
   });
+  const pagedFiltered = filtered.slice((page - 1) * pageSize, page * pageSize);
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [search, filterCategory, filterBrand, filterStatus, filterWarehouse, filterColor, filterSize, filterUnit]);
 
   function getStockBadge(qty: number, min: number) {
     if (qty === 0) return <span className="badge-status bg-red-50 text-red-600">Out of Stock</span>;
@@ -322,7 +342,7 @@ export default function InventoryPage() {
         <div className="flex items-center gap-4 flex-wrap text-sm">
           <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg font-medium">
             <Boxes className="w-4 h-4" />
-            Showing {filtered.length} of {products.filter(p => p.is_active).length} products
+            Showing {Math.min((page-1)*pageSize+1, filtered.length)}–{Math.min(page*pageSize, filtered.length)} of {filtered.length} products
           </span>
           <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-green-50 text-green-700 rounded-lg font-medium">
             <Package className="w-4 h-4" />
@@ -373,7 +393,7 @@ export default function InventoryPage() {
                   <td colSpan={9} className="px-4 py-12 text-center text-muted-foreground text-sm">No products found</td>
                 </tr>
               ) : (
-                filtered.map((p) => (
+                pagedFiltered.map((p) => (
                   <tr key={p.id} className={`hover:bg-muted/30 transition-colors ${!p.is_active ? 'opacity-50' : ''}`}>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -426,6 +446,14 @@ export default function InventoryPage() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          total={filtered.length}
+          onPageChange={setPage}
+          onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+          pageSizeOptions={[25, 50, 100, 200]}
+        />
       </div>
 
       {showAddModal && (

@@ -10,6 +10,7 @@ import DeliveryChallan from '@/components/DeliveryChallan';
 import EditInvoiceModal from '@/components/EditInvoiceModal';
 import EditHistoryPanel from '@/components/EditHistoryPanel';
 import { useRouter } from 'next/navigation';
+import Pagination from '@/components/ui/AppPagination';
 import type { Invoice, InvoiceStatus, Customer, Product, Payment, PaymentMethod, ProductUnit } from '@/lib/types';
 import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
 import ProductSearchInput from '@/components/ui/ProductSearchInput';
@@ -437,6 +438,9 @@ export default function SalesPage() {
   const displayInvoices = productFilteredIds === null
     ? filtered
     : filtered.filter(inv => productFilteredIds.has(inv.id));
+  const [invPage, setInvPage] = useState(1);
+  const [invPageSize, setInvPageSize] = useState(25);
+  const pagedInvoices = displayInvoices.slice((invPage - 1) * invPageSize, invPage * invPageSize);
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -612,7 +616,7 @@ export default function SalesPage() {
                 <tr><td colSpan={10} className="px-4 py-12 text-center text-muted-foreground text-sm">
                   {period === 'today' ? 'No invoices for today. Try "Last 7 Days" to see more.' : 'No invoices found'}
                 </td></tr>
-              ) : displayInvoices.map((inv) => {
+              ) : pagedInvoices.map((inv) => {
                 const cfg = statusConfig[inv.status as InvoiceStatus] || statusConfig.draft;
                 const hasReturns = inv.sales_returns && inv.sales_returns.length > 0;
                 const totalReturnedQty = hasReturns
@@ -734,9 +738,13 @@ export default function SalesPage() {
             </tbody>
           </table>
         </div>
-        <div className="px-4 py-3 border-t border-border">
-          <p className="text-xs text-muted-foreground">{displayInvoices.length} invoices</p>
-        </div>
+        <Pagination
+          page={invPage}
+          pageSize={invPageSize}
+          total={displayInvoices.length}
+          onPageChange={setInvPage}
+          onPageSizeChange={(s) => { setInvPageSize(s); setInvPage(1); }}
+        />
       </div>
 
       {showCreateModal && (

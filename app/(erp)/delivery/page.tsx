@@ -7,6 +7,7 @@ import { toast } from '@/hooks/use-toast';
 import { Plus, Search, MapPin, Clock, CircleCheck as CheckCircle2, Circle as XCircle, Package, Truck, X, CreditCard as Edit, Printer, FileText, Filter, ChevronDown } from 'lucide-react';
 import DeliveryChallan from '@/components/DeliveryChallan';
 import type { Delivery, DeliveryStatus, Customer } from '@/lib/types';
+import Pagination from '@/components/ui/AppPagination';
 
 const statusConfig: Record<DeliveryStatus, { label: string; color: string; bg: string; icon: React.ElementType }> = {
   pending: { label: 'Pending', color: 'text-gray-600', bg: 'bg-gray-100', icon: Clock },
@@ -124,7 +125,10 @@ export default function DeliveryPage() {
     if (filterDateFrom && !d.delivery_date) return false;
     if (filterDateTo && !d.delivery_date) return false;
     return true;
-  });
+  })
+  const [delPage, setDelPage] = useState(1);
+  const [delPageSize, setDelPageSize] = useState(25);
+  const pagedFiltered = filtered.slice((delPage - 1) * delPageSize, delPage * delPageSize);;
 
   const stats = {
     pending: deliveries.filter(d => d.status === 'pending').length,
@@ -254,7 +258,7 @@ export default function DeliveryPage() {
                 <tr key={i}>{Array.from({ length: 6 }).map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-muted rounded animate-pulse" /></td>)}</tr>
               )) : filtered.length === 0 ? (
                 <tr><td colSpan={6} className="px-4 py-12 text-center text-muted-foreground text-sm">No deliveries found</td></tr>
-              ) : filtered.map((d) => {
+              ) : pagedFiltered.map((d) => {
                 const cfg = statusConfig[d.status as DeliveryStatus] || statusConfig.pending;
                 const Icon = cfg.icon;
                 return (
@@ -306,7 +310,13 @@ export default function DeliveryPage() {
             </tbody>
           </table>
         </div>
-        <div className="px-4 py-3 border-t border-border"><p className="text-xs text-muted-foreground">{filtered.length} deliveries</p></div>
+        <Pagination
+          page={delPage}
+          pageSize={delPageSize}
+          total={filtered.length}
+          onPageChange={setDelPage}
+          onPageSizeChange={(s) => { setDelPageSize(s); setDelPage(1); }}
+        />
       </div>
 
       {showCreateModal && (

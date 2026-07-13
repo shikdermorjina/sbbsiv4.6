@@ -73,8 +73,10 @@ export default function DeliveryChallan({
             overflow: visible !important;
           }
           .print-items-table { page-break-inside: auto; }
-          .print-items-table tr { page-break-inside: avoid; page-break-after: auto; }
-          .print-footer-section { page-break-inside: avoid; }
+          .print-items-table tr { page-break-inside: avoid; break-inside: avoid; page-break-after: auto; }
+          .print-footer-section { page-break-inside: avoid; break-inside: avoid; }
+          .print-header-logo { height: 60px !important; }
+          .print-header-section { padding: 8px 16px !important; }
         }
       `}</style>
 
@@ -109,8 +111,9 @@ export default function DeliveryChallan({
             <img
               src={logoSrc}
               alt="SI Building Solutions"
+              className="print-header-logo"
               style={{
-                height: '88px',
+                height: '72px',
                 width: 'auto',
                 maxWidth: '340px',
                 objectFit: 'contain',

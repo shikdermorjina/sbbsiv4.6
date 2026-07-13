@@ -165,18 +165,31 @@ export default function PrintTemplate({
             box-shadow: none !important;
             overflow: visible !important;
           }
+          .print-header-logo {
+            height: 60px !important;
+          }
+          .print-header-section {
+            padding: 8px 16px !important;
+          }
           .print-no-break {
             page-break-inside: avoid;
+            break-inside: avoid;
           }
           .print-items-table {
             page-break-inside: auto;
           }
           .print-items-table tr {
             page-break-inside: avoid;
+            break-inside: avoid;
             page-break-after: auto;
           }
           .print-footer-section {
             page-break-inside: avoid;
+            break-inside: avoid;
+          }
+          .print-totals-section {
+            page-break-inside: avoid;
+            break-inside: avoid;
           }
         }
       `}</style>
@@ -212,8 +225,9 @@ export default function PrintTemplate({
             <img
               src={logoSrc}
               alt="SI Building Solutions"
+              className="print-header-logo"
               style={{
-                height: '90px',
+                height: '80px',
                 width: 'auto',
                 maxWidth: '400px',
                 objectFit: 'contain',
@@ -533,8 +547,8 @@ export default function PrintTemplate({
                 </tr>
               ))
             )}
-            {/* Filler rows to ensure minimum table height for professional layout */}
-            {Array.from({ length: Math.max(0, 12 - items.length) }).map((_, idx) => (
+            {/* Filler rows — capped at 5 to avoid pushing content to page 2 */}
+            {Array.from({ length: Math.max(0, Math.min(5, 12 - items.length)) }).map((_, idx) => (
               <tr
                 key={`filler-${idx}`}
                 style={{
@@ -551,7 +565,7 @@ export default function PrintTemplate({
         </table>
 
         {/* ═══════════════════ QR + TOTALS ═══════════════════ */}
-        <div style={{ display: 'flex', borderTop: `2px solid ${PRIMARY}` }}>
+        <div className="print-totals-section" style={{ display: 'flex', borderTop: `2px solid ${PRIMARY}` }}>
           {/* QR */}
           <div
             style={{

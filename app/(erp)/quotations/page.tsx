@@ -10,6 +10,7 @@ import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib
 import ProductSearchInput from '@/components/ui/ProductSearchInput';
 import ProductFilterDropdown from '@/components/ui/ProductFilterDropdown';
 import PrintTemplate from '@/components/PrintTemplate';
+import Pagination from '@/components/ui/AppPagination';
 
 const statusConfig: Record<QuotationStatus, { label: string; color: string; bg: string }> = {
   draft: { label: 'Draft', color: 'text-gray-600', bg: 'bg-gray-100' },
@@ -120,6 +121,9 @@ export default function QuotationsPage() {
   const displayQuotations = productFilteredIds === null
     ? filtered
     : filtered.filter(q => productFilteredIds.has(q.id));
+  const [qtPage, setQtPage] = useState(1);
+  const [qtPageSize, setQtPageSize] = useState(25);
+  const pagedQuotations = displayQuotations.slice((qtPage - 1) * qtPageSize, qtPage * qtPageSize);
 
   const stats = {
     total: quotations.length,
@@ -259,7 +263,7 @@ export default function QuotationsPage() {
                 <tr key={i}>{Array.from({ length: 7 }).map((_, j) => <td key={j} className="px-4 py-3"><div className="h-4 bg-muted rounded animate-pulse" /></td>)}</tr>
               )) : displayQuotations.length === 0 ? (
                 <tr><td colSpan={7} className="px-4 py-12 text-center text-muted-foreground text-sm">No quotations found</td></tr>
-              ) : displayQuotations.map((q) => {
+              ) : pagedQuotations.map((q) => {
                 const cfg = statusConfig[q.status as QuotationStatus] || statusConfig.draft;
                 return (
                   <tr key={q.id} className="hover:bg-muted/30 transition-colors">
@@ -286,6 +290,13 @@ export default function QuotationsPage() {
             </tbody>
           </table>
         </div>
+        <Pagination
+          page={qtPage}
+          pageSize={qtPageSize}
+          total={displayQuotations.length}
+          onPageChange={setQtPage}
+          onPageSizeChange={(s) => { setQtPageSize(s); setQtPage(1); }}
+        />
       </div>
 
       {showCreateModal && (
