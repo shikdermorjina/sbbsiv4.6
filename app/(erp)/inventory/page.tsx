@@ -394,6 +394,7 @@ export default function InventoryPage() {
           placeholder="All Categories"
           className="min-w-[150px]"
           options={[
+            { value: '', label: 'All Categories' },
             ...categories.filter(c => !c.parent_id).flatMap(c => [
               { value: c.id, label: c.name, group: c.name },
               ...categories.filter(sc => sc.parent_id === c.id).map(sc => ({ value: sc.id, label: `  ${sc.name}`, group: c.name })),
@@ -405,7 +406,7 @@ export default function InventoryPage() {
           onChange={setFilterBrand}
           placeholder="All Brands"
           className="min-w-[130px]"
-          options={brands.map(b => ({ value: b.id, label: b.name }))}
+          options={[{ value: '', label: 'All Brands' }, ...brands.map(b => ({ value: b.id, label: b.name }))]}
         />
         <select value={filterWarehouse} onChange={e => setFilterWarehouse(e.target.value)} className="border border-border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20">
           <option value="">All Warehouses</option>
@@ -424,7 +425,7 @@ export default function InventoryPage() {
             onChange={setFilterColor}
             placeholder="All Colors"
             className="min-w-[120px]"
-            options={allColors.map(c => ({ value: c.name, label: c.name }))}
+            options={[{ value: '', label: 'All Colors' }, ...allColors.map(c => ({ value: c.name, label: c.name }))]}
           />
         )}
         {allSizes.length > 0 && (
@@ -439,7 +440,7 @@ export default function InventoryPage() {
             onChange={setFilterUnit}
             placeholder="All Units"
             className="min-w-[110px]"
-            options={unitTypes.map(u => ({ value: u.unit_name, label: u.unit_name }))}
+            options={[{ value: '', label: 'All Units' }, ...unitTypes.map(u => ({ value: u.unit_name, label: u.unit_name }))]}
           />
         )}
         <button onClick={loadData} className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 text-sm hover:bg-muted transition">

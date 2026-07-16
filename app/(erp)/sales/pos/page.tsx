@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/format';
 import { toast } from '@/hooks/use-toast';
-import { Search, Plus, Minus, Trash2, ShoppingCart, CreditCard, Banknote, Smartphone, CircleCheck as CheckCircle2, X, Camera, UserPlus, Filter, Wallet, Maximize2, Minimize2, ArrowRight, ArrowLeft, Receipt, History, Eye, EyeOff, ImagePlus, Package, Check } from 'lucide-react';
+import { Search, Plus, Minus, Trash2, ShoppingCart, CreditCard, Banknote, Smartphone, CircleCheck as CheckCircle2, X, Camera, UserPlus, Filter, Wallet, Maximize2, Minimize2, ArrowRight, ArrowLeft, Receipt, History, Eye, EyeOff, ImagePlus, Package, Check, Clock, DollarSign } from 'lucide-react';
 import type { ProductUnit } from '@/lib/types';
 import { isMultiUnitEnabled, getDefaultSaleUnit, convertToBaseUnit } from '@/lib/unit-utils';
 
@@ -23,6 +23,8 @@ interface CartItem {
   unit_price: number;
   base_quantity: number;
 }
+
+type PaymentTerm = 'full' | 'partial' | 'credit';
 
 interface ProductData {
   id: string;
@@ -49,10 +51,13 @@ export default function POSPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] = useState(WALK_IN_CUSTOMER_ID);
+  const [selectedCustomer, setSelectedCustomer] = useState<string>('');
+  const [walkInCustomerId, setWalkInCustomerId] = useState<string>(WALK_IN_CUSTOMER_ID);
   const [customers, setCustomers] = useState<any[]>([]);
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
+  const [paymentTerm, setPaymentTerm] = useState<PaymentTerm>('full');
+  const [partialAmount, setPartialAmount] = useState('');
   const [discount, setDiscount] = useState(0);
   const [orderComplete, setOrderComplete] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -85,11 +90,19 @@ export default function POSPage() {
       .then(({ data }) => {
         if (data?.setting_value?.default_image_url) setDefaultProductImage(data.setting_value.default_image_url);
       });
+    // Fetch actual walk-in customer from DB
+    supabase.from('customers').select('id, name').ilike('name', '%walk%').limit(1)
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setWalkInCustomerId(data[0].id);
+          setSelectedCustomer(data[0].id);
+        }
+      });
   }, []);
 
   // Load store credit balance when customer changes
   useEffect(() => {
-    if (!selectedCustomer || selectedCustomer === WALK_IN_CUSTOMER_ID) {
+    if (!selectedCustomer || selectedCustomer === walkInCustomerId) {
       setStoreCreditBalance(0);
       setApplyStoreCredit(false);
       return;
@@ -275,7 +288,33 @@ export default function POSPage() {
 
       const customerId = selectedCustomer;
       const creditToApply = applyStoreCredit ? Math.min(storeCreditBalance, total) : 0;
-      const cashToPay = total - creditToApply;
+
+      // Determine amount paid based on payment term
+      let amountPaid = 0;
+      let invoiceStatus = 'draft';
+      if (paymentTerm === 'full') {
+        amountPaid = total;
+        invoiceStatus = creditToApply > 0 && (total - creditToApply) > 0 ? 'partially_paid' : 'paid';
+      } else if (paymentTerm === 'partial') {
+        amountPaid = parseFloat(partialAmount) || 0;
+        if (amountPaid <= 0) {
+          toast({ title: 'Invalid amount', description: 'Please enter a partial payment amount', variant: 'destructive' });
+          setProcessing(false);
+          return;
+        }
+        if (amountPaid >= total) {
+          toast({ title: 'Invalid amount', description: 'Partial payment must be less than total. Use Full Payment.', variant: 'destructive' });
+          setProcessing(false);
+          return;
+        }
+        invoiceStatus = 'partially_paid';
+      } else {
+        // credit — no payment now
+        amountPaid = 0;
+        invoiceStatus = 'sent';
+      }
+
+      const cashToPay = paymentTerm === 'full' ? (total - creditToApply) : (paymentTerm === 'partial' ? amountPaid : 0);
 
       const { data: invoice, error: invError } = await supabase
         .from('invoices')
@@ -287,8 +326,8 @@ export default function POSPage() {
           discount_amount: discountAmount,
           tax_amount: 0,
           total_amount: total,
-          amount_paid: total,
-          status: creditToApply > 0 && cashToPay === 0 ? 'paid' : (cashToPay > 0 && cashToPay < total ? 'partial' : 'paid'),
+          amount_paid: paymentTerm === 'full' ? total : (paymentTerm === 'partial' ? amountPaid : 0),
+          status: invoiceStatus,
           is_pos: true,
         })
         .select()
@@ -340,7 +379,9 @@ export default function POSPage() {
       // Stock deduction is handled by the DB trigger on invoice_items INSERT
 
       // Record payment: if store credit is applied, record the cash/card portion separately
-      if (creditToApply > 0) {
+      if (paymentTerm === 'credit') {
+        // On credit — no payment to record
+      } else if (creditToApply > 0) {
         // Redeem store credit
         const { data: activeCredits } = await supabase
           .from('customer_store_credits')
@@ -394,9 +435,7 @@ export default function POSPage() {
           notes: creditToApply > 0 ? `POS sale (partial store credit: ${formatCurrency(creditToApply)})` : 'POS sale',
         });
         if (payError) console.error('Payment record error:', payError.message);
-      }
 
-      if (customerId !== WALK_IN_CUSTOMER_ID) {
         const { data: custData } = await supabase
           .from('customers')
           .select('total_purchases')
@@ -412,9 +451,11 @@ export default function POSPage() {
 
       setCart([]);
       setDiscount(0);
-      setSelectedCustomer('');
+      setSelectedCustomer(walkInCustomerId);
       setStoreCreditBalance(0);
       setApplyStoreCredit(false);
+      setPaymentTerm('full');
+      setPartialAmount('');
       setShowCheckout(false);
       setAmountPaid('');
       setCartTab('items');
@@ -682,8 +723,8 @@ export default function POSPage() {
                   <div className="max-h-60 overflow-y-auto">
                     <button
                       type="button"
-                      onClick={() => { setSelectedCustomer(WALK_IN_CUSTOMER_ID); setCustomerDropdownOpen(false); setCustomerSearch(''); }}
-                      className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-blue-50 transition text-left ${selectedCustomer === WALK_IN_CUSTOMER_ID ? 'bg-blue-50 text-blue-600' : 'text-foreground'}`}
+                      onClick={() => { setSelectedCustomer(walkInCustomerId); setCustomerDropdownOpen(false); setCustomerSearch(''); }}
+                      className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-blue-50 transition text-left ${selectedCustomer === walkInCustomerId ? 'bg-blue-50 text-blue-600' : 'text-foreground'}`}
                     >
                       <span>Walk-in Customer</span>
                       <span className="text-[10px] text-muted-foreground">CUST-272756</span>
@@ -1028,7 +1069,12 @@ export default function POSPage() {
           applyStoreCredit={applyStoreCredit}
           setApplyStoreCredit={setApplyStoreCredit}
           selectedCustomer={selectedCustomer}
+          customers={customers}
           cart={cart}
+          paymentTerm={paymentTerm}
+          setPaymentTerm={setPaymentTerm}
+          partialAmount={partialAmount}
+          setPartialAmount={setPartialAmount}
         />
       )}
 
@@ -1389,7 +1435,8 @@ function CheckoutModal({
   total, subtotal, discount, discountAmount, paymentMethod, setPaymentMethod,
   displayMethods, paymentMethodIcons, paymentMethodColors,
   amountPaid, setAmountPaid, processing, onConfirm, onClose,
-  storeCreditBalance, applyStoreCredit, setApplyStoreCredit, selectedCustomer, cart,
+  storeCreditBalance, applyStoreCredit, setApplyStoreCredit, selectedCustomer, customers, cart,
+  paymentTerm, setPaymentTerm, partialAmount, setPartialAmount,
 }: {
   total: number; subtotal: number; discount: number; discountAmount: number;
   paymentMethod: string; setPaymentMethod: (m: string) => void;
@@ -1397,13 +1444,18 @@ function CheckoutModal({
   amountPaid: string; setAmountPaid: (v: string) => void;
   processing: boolean; onConfirm: () => void; onClose: () => void;
   storeCreditBalance: number; applyStoreCredit: boolean; setApplyStoreCredit: (v: boolean) => void;
-  selectedCustomer: any; cart: any[];
+  selectedCustomer: any; customers: any[]; cart: any[];
+  paymentTerm: string; setPaymentTerm: (v: any) => void;
+  partialAmount: string; setPartialAmount: (v: string) => void;
 }) {
   const [step, setStep] = useState<'method' | 'confirm'>('method');
   const paid = parseFloat(amountPaid) || 0;
   const change = paid - total;
   const totalCost = cart.reduce((s, item) => s + (item.cost_price || 0) * item.quantity, 0);
   const profit = total - totalCost;
+  const customerName = selectedCustomer ? (customers.find(c => c.id === selectedCustomer)?.name || 'Walk-in Customer') : 'Walk-in Customer';
+  const partialNum = parseFloat(partialAmount) || 0;
+  const isWalkIn = !selectedCustomer || selectedCustomer === '00000000-0000-0000-0000-000000000001';
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[110] p-4">
@@ -1429,29 +1481,84 @@ function CheckoutModal({
 
           {step === 'method' ? (
             <>
-              {/* Payment method grid */}
+              {/* Payment Terms */}
               <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-2">PAYMENT METHOD</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {displayMethods.map(m => {
-                    const Icon = paymentMethodIcons[m.code] || Banknote;
-                    const color = paymentMethodColors[m.code] || 'text-gray-600 bg-gray-50 border-gray-200';
-                    const selected = paymentMethod === m.code;
-                    return (
-                      <button
-                        key={m.code}
-                        onClick={() => setPaymentMethod(m.code)}
-                        className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 text-sm font-medium transition ${selected ? color + ' border-current ring-2 ring-current/10' : 'border-border text-muted-foreground hover:border-blue-200 hover:bg-muted/30'}`}
-                      >
-                        <Icon className="w-4 h-4" />{m.name}
-                      </button>
-                    );
-                  })}
+                <label className="block text-xs font-semibold text-muted-foreground mb-2">PAYMENT TERMS</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    onClick={() => setPaymentTerm('full')}
+                    className={`flex flex-col items-center gap-1 px-2 py-2.5 rounded-xl border-2 text-xs font-medium transition ${paymentTerm === 'full' ? 'text-green-700 bg-green-50 border-green-600 ring-2 ring-green-500/10' : 'border-border text-muted-foreground hover:border-green-200 hover:bg-green-50/30'}`}
+                  >
+                    <CheckCircle2 className="w-4 h-4" /> Full
+                    <span className="text-[10px] text-muted-foreground">Pay all now</span>
+                  </button>
+                  <button
+                    onClick={() => setPaymentTerm('partial')}
+                    disabled={isWalkIn}
+                    className={`flex flex-col items-center gap-1 px-2 py-2.5 rounded-xl border-2 text-xs font-medium transition ${paymentTerm === 'partial' ? 'text-amber-700 bg-amber-50 border-amber-600 ring-2 ring-amber-500/10' : 'border-border text-muted-foreground hover:border-amber-200 hover:bg-amber-50/30'} ${isWalkIn ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  >
+                    <DollarSign className="w-4 h-4" /> Partial
+                    <span className="text-[10px] text-muted-foreground">Pay some now</span>
+                  </button>
+                  <button
+                    onClick={() => setPaymentTerm('credit')}
+                    disabled={isWalkIn}
+                    className={`flex flex-col items-center gap-1 px-2 py-2.5 rounded-xl border-2 text-xs font-medium transition ${paymentTerm === 'credit' ? 'text-blue-700 bg-blue-50 border-blue-600 ring-2 ring-blue-500/10' : 'border-border text-muted-foreground hover:border-blue-200 hover:bg-blue-50/30'} ${isWalkIn ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  >
+                    <Clock className="w-4 h-4" /> On Credit
+                    <span className="text-[10px] text-muted-foreground">Pay later</span>
+                  </button>
                 </div>
+                {isWalkIn && (paymentTerm === 'partial' || paymentTerm === 'credit') && (
+                  <p className="text-[11px] text-amber-600 mt-1.5">Partial and credit terms require a selected customer. Walk-in customers must use full payment.</p>
+                )}
               </div>
 
+              {/* Partial payment amount input */}
+              {paymentTerm === 'partial' && (
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground mb-1.5">PARTIAL PAYMENT AMOUNT</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    max={total - 0.01}
+                    step="0.01"
+                    value={partialAmount}
+                    onChange={e => setPartialAmount(e.target.value)}
+                    placeholder={`Enter amount (Max: ${formatCurrency(total)})`}
+                    className="w-full border border-amber-300 bg-amber-50/30 rounded-lg px-3 py-2.5 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  />
+                  <p className="text-xs text-amber-700 mt-1 font-medium">
+                    Balance Due After Payment: {formatCurrency(total - partialNum)}
+                  </p>
+                </div>
+              )}
+
+              {/* Payment method grid — only for full and partial terms */}
+              {paymentTerm !== 'credit' && (
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground mb-2">PAYMENT METHOD</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {displayMethods.map(m => {
+                      const Icon = paymentMethodIcons[m.code] || Banknote;
+                      const color = paymentMethodColors[m.code] || 'text-gray-600 bg-gray-50 border-gray-200';
+                      const selected = paymentMethod === m.code;
+                      return (
+                        <button
+                          key={m.code}
+                          onClick={() => setPaymentMethod(m.code)}
+                          className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 text-sm font-medium transition ${selected ? color + ' border-current ring-2 ring-current/10' : 'border-border text-muted-foreground hover:border-blue-200 hover:bg-muted/30'}`}
+                        >
+                          <Icon className="w-4 h-4" />{m.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Store credit option */}
-              {storeCreditBalance > 0 && selectedCustomer && (
+              {storeCreditBalance > 0 && selectedCustomer && paymentTerm !== 'credit' && (
                 <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl p-3">
                   <div>
                     <p className="text-xs font-semibold text-amber-800">Apply Store Credit</p>
@@ -1466,24 +1573,26 @@ function CheckoutModal({
                 </div>
               )}
 
-              {/* Amount paid input */}
-              <div>
-                <label className="block text-xs font-semibold text-muted-foreground mb-1.5">AMOUNT PAID</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={amountPaid}
-                  onChange={e => setAmountPaid(e.target.value)}
-                  placeholder={total.toFixed(2)}
-                  className="w-full border border-border rounded-lg px-3 py-2.5 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-                {paid > 0 && (
-                  <p className={`text-xs mt-1 ${change >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                    {change >= 0 ? `Change: ${formatCurrency(change)}` : `Remaining: ${formatCurrency(-change)}`}
-                  </p>
-                )}
-              </div>
+              {/* Amount paid input — only for full and partial terms */}
+              {paymentTerm !== 'credit' && (
+                <div>
+                  <label className="block text-xs font-semibold text-muted-foreground mb-1.5">AMOUNT PAID</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={amountPaid}
+                    onChange={e => setAmountPaid(e.target.value)}
+                    placeholder={total.toFixed(2)}
+                    className="w-full border border-border rounded-lg px-3 py-2.5 text-base font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                  {paid > 0 && (
+                    <p className={`text-xs mt-1 ${change >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      {change >= 0 ? `Change: ${formatCurrency(change)}` : `Remaining: ${formatCurrency(-change)}`}
+                    </p>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             /* Confirmation step */
@@ -1494,17 +1603,21 @@ function CheckoutModal({
                     const Icon = paymentMethodIcons[paymentMethod] || Banknote;
                     return <Icon className="w-5 h-5 text-blue-600" />;
                   })()}
-                  <span className="text-sm font-semibold">{displayMethods.find(m => m.code === paymentMethod)?.name || paymentMethod}</span>
+                  <span className="text-sm font-semibold">{paymentTerm === 'credit' ? 'On Credit' : (displayMethods.find(m => m.code === paymentMethod)?.name || paymentMethod)}</span>
                 </div>
                 <button onClick={() => setStep('method')} className="text-xs text-blue-600 hover:underline">Change</button>
               </div>
 
               <div className="space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-muted-foreground">Customer</span><span className="font-medium truncate max-w-[180px]">{selectedCustomer?.name || 'Walk-in'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Customer</span><span className="font-medium truncate max-w-[180px]">{customerName}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Items</span><span className="font-medium">{cart.length}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Amount Paid</span><span className="font-medium">{formatCurrency(paid || total)}</span></div>
-                {paid > 0 && change >= 0 && <div className="flex justify-between"><span className="text-muted-foreground">Change</span><span className="font-medium text-green-600">{formatCurrency(change)}</span></div>}
-                {applyStoreCredit && storeCreditBalance > 0 && <div className="flex justify-between text-amber-700"><span>Store Credit Applied</span><span className="font-medium">{formatCurrency(Math.min(storeCreditBalance, total))}</span></div>}
+                <div className="flex justify-between"><span className="text-muted-foreground">Payment Term</span><span className="font-medium">{paymentTerm === 'full' ? 'Full Payment' : paymentTerm === 'partial' ? 'Partial Payment' : 'On Credit'}</span></div>
+                {paymentTerm === 'full' && <div className="flex justify-between"><span className="text-muted-foreground">Amount Paid</span><span className="font-medium">{formatCurrency(paid || total)}</span></div>}
+                {paymentTerm === 'partial' && <div className="flex justify-between"><span className="text-muted-foreground">Amount Paid</span><span className="font-medium">{formatCurrency(partialNum)}</span></div>}
+                {paymentTerm === 'partial' && <div className="flex justify-between text-amber-600"><span className="text-muted-foreground">Balance Due</span><span className="font-medium">{formatCurrency(total - partialNum)}</span></div>}
+                {paymentTerm === 'credit' && <div className="flex justify-between text-blue-600"><span className="text-muted-foreground">Balance Due</span><span className="font-medium">{formatCurrency(total)}</span></div>}
+                {paymentTerm === 'full' && paid > 0 && change >= 0 && <div className="flex justify-between"><span className="text-muted-foreground">Change</span><span className="font-medium text-green-600">{formatCurrency(change)}</span></div>}
+                {applyStoreCredit && storeCreditBalance > 0 && paymentTerm !== 'credit' && <div className="flex justify-between text-amber-700"><span>Store Credit Applied</span><span className="font-medium">{formatCurrency(Math.min(storeCreditBalance, total))}</span></div>}
               </div>
 
               <div className="bg-muted/30 rounded-xl p-3 space-y-1 text-xs">
@@ -1522,7 +1635,7 @@ function CheckoutModal({
               <button onClick={onClose} className="flex-1 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-muted transition">Cancel</button>
               <button
                 onClick={() => setStep('confirm')}
-                disabled={!paymentMethod}
+                disabled={!paymentMethod && paymentTerm !== 'credit'}
                 className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50 flex items-center justify-center gap-1.5"
               >
                 Next <ArrowRight className="w-4 h-4" />
@@ -1538,7 +1651,7 @@ function CheckoutModal({
                 disabled={processing}
                 className="flex-1 px-4 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-bold transition disabled:opacity-50 flex items-center justify-center gap-1.5"
               >
-                <CheckCircle2 className="w-4 h-4" /> {processing ? 'Processing...' : `Charge ${formatCurrency(total)}`}
+                <CheckCircle2 className="w-4 h-4" /> {processing ? 'Processing...' : `Charge ${formatCurrency(paymentTerm === 'partial' ? partialNum : total)}`}
               </button>
             </>
           )}
