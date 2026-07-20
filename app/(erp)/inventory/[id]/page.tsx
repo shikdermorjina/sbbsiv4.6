@@ -67,24 +67,44 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     });
 
     // Load sales data (invoice_items with invoice and customer info) - exclude cancelled/draft invoices
+    // Fetch invoice-level discounts so revenue reflects cart_discount_percent and extra_discount
     const { data: salesItems } = await supabase
       .from('invoice_items')
       .select(`
         id, quantity, unit_price, discount_percent, subtotal, cost_price, base_quantity, unit_name,
-        invoice:invoices!inner(invoice_number, invoice_date, status, created_at, customer:customers(name))
+        invoice:invoices!inner(invoice_number, invoice_date, status, created_at, subtotal, cart_discount_percent, extra_discount, total_amount, customer:customers(name))
       `)
       .eq('product_id', id)
       .in('invoice.status', ['paid', 'partially_paid', 'sent', 'overdue', 'unpaid']);
 
-    // Sort by invoice created_at descending
-    const sortedSalesItems = (salesItems || []).sort((a: any, b: any) =>
+    // Compute net revenue per line item, prorating invoice-level discounts
+    const invoiceSubtotals = new Map<string, number>();
+    for (const item of (salesItems || [])) {
+      const inv: any = item.invoice;
+      if (inv && !invoiceSubtotals.has(inv.invoice_number)) {
+        invoiceSubtotals.set(inv.invoice_number, Number(inv.subtotal) || 0);
+      }
+    }
+    const sortedSalesItems = (salesItems || []).map((item: any) => {
+      const inv: any = item.invoice;
+      const lineSubtotal = Number(item.subtotal) || 0;
+      const invSubtotal = invoiceSubtotals.get(inv?.invoice_number) || lineSubtotal;
+      const cartDiscPct = Number(inv?.cart_discount_percent) || 0;
+      const extraDisc = Number(inv?.extra_discount) || 0;
+      // Prorate cart discount (percentage) and extra discount (flat) by this line's share of invoice subtotal
+      const share = invSubtotal > 0 ? lineSubtotal / invSubtotal : 0;
+      const cartDiscountAmount = (lineSubtotal * cartDiscPct) / 100;
+      const extraDiscountAmount = extraDisc * share;
+      const netRevenue = Math.max(0, lineSubtotal - cartDiscountAmount - extraDiscountAmount);
+      return { ...item, net_revenue: netRevenue, cart_discount_percent: cartDiscPct, extra_discount: extraDisc };
+    }).sort((a: any, b: any) =>
       new Date((b.invoice as any)?.created_at || 0).getTime() - new Date((a.invoice as any)?.created_at || 0).getTime()
     ).slice(0, 50);
 
     setSalesData(sortedSalesItems || []);
 
     const totalQty = (sortedSalesItems || []).reduce((s: number, i: any) => s + Number(i.quantity), 0);
-    const totalRevenue = (sortedSalesItems || []).reduce((s: number, i: any) => s + Number(i.subtotal), 0);
+    const totalRevenue = (sortedSalesItems || []).reduce((s: number, i: any) => s + Number(i.net_revenue), 0);
     const totalCOGS = (sortedSalesItems || []).reduce((s: number, i: any) => s + Number(i.cost_price) * Number(i.quantity), 0);
     setSalesStats({
       totalQty,
@@ -371,14 +391,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     <th className="px-4 py-3 text-left font-medium">Customer</th>
                     <th className="px-4 py-3 text-center font-medium">Qty</th>
                     <th className="px-4 py-3 text-right font-medium">Unit Price</th>
-                    <th className="px-4 py-3 text-center font-medium">Disc%</th>
-                    <th className="px-4 py-3 text-right font-medium">Subtotal</th>
+                    <th className="px-4 py-3 text-center font-medium">Line Disc%</th>
+                    <th className="px-4 py-3 text-right font-medium">Line Subtotal</th>
+                    <th className="px-4 py-3 text-center font-medium">Cart Disc%</th>
+                    <th className="px-4 py-3 text-right font-medium">Extra Disc</th>
+                    <th className="px-4 py-3 text-right font-medium">Net Revenue</th>
                     <th className="px-4 py-3 text-center font-medium">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {salesData.length === 0 ? (
-                    <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">No sales recorded for this product</td></tr>
+                    <tr><td colSpan={11} className="px-4 py-8 text-center text-sm text-muted-foreground">No sales recorded for this product</td></tr>
                   ) : salesData.map((item: any) => (
                     <tr key={item.id} className="hover:bg-muted/20 transition">
                       <td className="px-4 py-3 text-sm font-medium text-blue-600">{item.invoice?.invoice_number || '—'}</td>
@@ -387,7 +410,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       <td className="px-4 py-3 text-sm text-center">{item.quantity} {item.unit_name || product.base_unit || product.unit || ''}</td>
                       <td className="px-4 py-3 text-sm text-right">{formatCurrency(Number(item.unit_price))}</td>
                       <td className="px-4 py-3 text-sm text-center">{Number(item.discount_percent) > 0 ? `${item.discount_percent}%` : '—'}</td>
-                      <td className="px-4 py-3 text-sm text-right font-medium">{formatCurrency(Number(item.subtotal))}</td>
+                      <td className="px-4 py-3 text-sm text-right text-muted-foreground">{formatCurrency(Number(item.subtotal))}</td>
+                      <td className="px-4 py-3 text-sm text-center">{Number(item.cart_discount_percent) > 0 ? `${item.cart_discount_percent}%` : '—'}</td>
+                      <td className="px-4 py-3 text-sm text-right text-muted-foreground">{Number(item.extra_discount) > 0 ? formatCurrency(Number(item.extra_discount)) : '—'}</td>
+                      <td className="px-4 py-3 text-sm text-right font-medium text-green-600">{formatCurrency(Number(item.net_revenue))}</td>
                       <td className="px-4 py-3 text-center">
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                           item.invoice?.status === 'paid' ? 'bg-green-50 text-green-700' :
