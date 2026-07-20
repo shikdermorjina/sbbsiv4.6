@@ -8,6 +8,8 @@ import { ArrowUpDown, TrendingUp, TrendingDown, Package, Search, X, Filter, Chev
 const typeConfig: Record<string, { label: string; color: string; bg: string; sign: string }> = {
   purchase: { label: 'Purchase', color: 'text-green-600', bg: 'bg-green-50', sign: '+' },
   sale: { label: 'Sale', color: 'text-red-600', bg: 'bg-red-50', sign: '-' },
+  return_in: { label: 'Return In', color: 'text-teal-600', bg: 'bg-teal-50', sign: '+' },
+  return_out: { label: 'Return Out', color: 'text-orange-600', bg: 'bg-orange-50', sign: '-' },
   adjustment: { label: 'Adjustment', color: 'text-blue-600', bg: 'bg-blue-50', sign: '±' },
   transfer_in: { label: 'Transfer In', color: 'text-teal-600', bg: 'bg-teal-50', sign: '+' },
   transfer_out: { label: 'Transfer Out', color: 'text-orange-600', bg: 'bg-orange-50', sign: '-' },
