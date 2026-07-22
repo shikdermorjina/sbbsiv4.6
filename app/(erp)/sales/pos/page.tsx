@@ -968,6 +968,9 @@ export default function POSPage() {
                     placeholder="0"
                     title="Discount %"
                   />
+                  {(item.discount_percent || 0) > 0 && (
+                    <span className="text-[9px] text-green-600 font-semibold whitespace-nowrap">→ {formatCurrency(item.unit_price * (1 - (item.discount_percent || 0) / 100))}</span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
