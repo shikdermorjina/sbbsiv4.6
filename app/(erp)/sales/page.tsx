@@ -75,6 +75,7 @@ export default function SalesPage() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [productFilteredIds, setProductFilteredIds] = useState<Set<string> | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
+  const [warehouses, setWarehouses] = useState<{ id: string; name: string; code: string }[]>([]);
   const [stats, setStats] = useState({ total: 0, paid: 0, refunded: 0, netCollected: 0, outstanding: 0, overdue: 0, storeCreditBalance: 0 });
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showNetCollectedModal, setShowNetCollectedModal] = useState(false);
@@ -116,7 +117,7 @@ export default function SalesPage() {
     if (from) invQuery = invQuery.gte('invoice_date', from);
     if (to) invQuery = invQuery.lte('invoice_date', to);
 
-    const [invRes, custRes, prodRes, settingsRes, returnsRes, paymentMethodsRes, paymentsRes, deliveriesRes] = await Promise.all([
+    const [invRes, custRes, prodRes, settingsRes, returnsRes, paymentMethodsRes, paymentsRes, deliveriesRes, warehousesRes] = await Promise.all([
       invQuery.limit(500),
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
       supabase.from('products').select(`*, units:product_units(id, product_id, unit_name, unit_short, conversion_factor, is_base_unit, is_sale_unit, price, cost_price, is_active, sort_order), inventory_items(id, warehouse_id, quantity_on_hand)`).eq('is_active', true).order('name'),
@@ -125,6 +126,7 @@ export default function SalesPage() {
       supabase.from('payment_methods').select('code, name').eq('is_active', true).order('sort_order'),
       supabase.from('payments').select('id, reference_id, payment_method, amount, payment_date').eq('reference_type', 'invoice'),
       supabase.from('deliveries').select('id, invoice_id, delivery_number, status'),
+      supabase.from('warehouses').select('id, name, code').eq('is_active', true).order('is_default', { ascending: false }).order('name'),
     ]);
 
     // Attach deliveries to their corresponding invoices
@@ -162,6 +164,7 @@ export default function SalesPage() {
 
     setInvoices(invoicesWithReturns);
     setPaymentMethods(paymentMethodsRes.data || []);
+    setWarehouses(warehousesRes.data || []);
     setCustomers(custRes.data || []);
     setProducts(prodRes.data || []);
     if (settingsRes.data?.setting_value) setCompanySettings(settingsRes.data.setting_value);
@@ -781,6 +784,7 @@ export default function SalesPage() {
         <CreateInvoiceModal
           customers={customers}
           products={products}
+          warehouses={warehouses}
           onClose={() => setShowCreateModal(false)}
           onSaved={loadData}
         />
@@ -850,9 +854,10 @@ export default function SalesPage() {
   );
 }
 
-function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
+function CreateInvoiceModal({ customers, products, warehouses, onClose, onSaved }: {
   customers: Customer[];
   products: Product[];
+  warehouses: { id: string; name: string; code: string }[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -894,13 +899,10 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
   const [customerList, setCustomerList] = useState(customers);
   const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
   const [formTab, setFormTab] = useState<'items' | 'cost'>('items');
-  const [warehouses, setWarehouses] = useState<{ id: string; name: string; code: string }[]>([]);
 
   useEffect(() => {
     supabase.from('payment_methods').select('code, name').eq('is_active', true).order('sort_order')
       .then(({ data }) => { if (data) setPaymentMethods(data); });
-    supabase.from('warehouses').select('id, name, code').eq('is_active', true).order('is_default', { ascending: false }).order('name')
-      .then(({ data }) => { if (data) setWarehouses(data); });
   }, []);
 
   function addProductToItems(product: any) {

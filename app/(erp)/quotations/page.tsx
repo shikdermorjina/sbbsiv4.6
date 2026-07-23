@@ -46,21 +46,24 @@ export default function QuotationsPage() {
   const [quotationItems, setQuotationItems] = useState<any[]>([]);
   const [convertingQuotation, setConvertingQuotation] = useState<QuotationWithCustomer | null>(null);
   const [companySettings, setCompanySettings] = useState<any>({});
+  const [warehouses, setWarehouses] = useState<{ id: string; name: string; code: string }[]>([]);
 
   useEffect(() => { loadData(); }, []);
 
   async function loadData() {
     setLoading(true);
-    const [quoteRes, custRes, prodRes, settingsRes] = await Promise.all([
+    const [quoteRes, custRes, prodRes, settingsRes, whRes] = await Promise.all([
       supabase.from('quotations').select('*, customer:customers(name, code, phone, email, address)').order('created_at', { ascending: false }),
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
       supabase.from('products').select(`*, units:product_units(id, product_id, unit_name, unit_short, conversion_factor, is_base_unit, is_sale_unit, price, cost_price, is_active, sort_order), inventory_items(id, warehouse_id, quantity_on_hand)`).eq('is_active', true).order('name'),
       supabase.from('app_settings').select('setting_value').eq('setting_key', 'company').maybeSingle(),
+      supabase.from('warehouses').select('id, name, code').eq('is_active', true).order('is_default', { ascending: false }).order('name'),
     ]);
     setQuotations(quoteRes.data || []);
     setCustomers(custRes.data || []);
     setProducts(prodRes.data || []);
     setCompanySettings(settingsRes.data?.setting_value || {});
+    setWarehouses(whRes.data || []);
     setLoading(false);
   }
 
@@ -305,6 +308,7 @@ export default function QuotationsPage() {
         <CreateQuotationModal
           customers={customers}
           products={products}
+          warehouses={warehouses}
           onClose={() => setShowCreateModal(false)}
           onSaved={() => { loadData(); }}
         />
@@ -426,9 +430,10 @@ function AddCustomerModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
   );
 }
 
-function CreateQuotationModal({ customers: initialCustomers, products, onClose, onSaved }: {
+function CreateQuotationModal({ customers: initialCustomers, products, warehouses, onClose, onSaved }: {
   customers: Customer[];
   products: Product[];
+  warehouses: { id: string; name: string; code: string }[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -463,12 +468,6 @@ function CreateQuotationModal({ customers: initialCustomers, products, onClose, 
   const [error, setError] = useState('');
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [formTab, setFormTab] = useState<'items' | 'cost'>('items');
-  const [warehouses, setWarehouses] = useState<{ id: string; name: string; code: string }[]>([]);
-
-  useEffect(() => {
-    supabase.from('warehouses').select('id, name, code').eq('is_active', true).order('is_default', { ascending: false }).order('name')
-      .then(({ data }) => { if (data) setWarehouses(data); });
-  }, []);
 
   function addProductToItems(product: any) {
     const multiUnit = product.enable_multi_unit && product.units && product.units.filter((u: any) => u.is_active).length > 0;
