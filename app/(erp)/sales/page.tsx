@@ -313,7 +313,10 @@ export default function SalesPage() {
                 {hideRate ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 {hideRate ? 'Rate Hidden' : 'Rate Visible'}
               </button>
-              <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1"><X className="w-5 h-5" /></button>
+              <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 transition">
+                <X className="w-4 h-4" />
+                <span className="hidden sm:inline">Close</span>
+              </button>
             </div>
           </div>
 
@@ -1288,9 +1291,12 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
                                 onChange={e => updateItem(index, 'warehouse_id', e.target.value)}
                                 className="w-full border border-emerald-200 bg-emerald-50 text-emerald-700 rounded px-2 py-1 text-xs focus:outline-none"
                               >
-                                {item.available_warehouses.map(w => (
-                                  <option key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_name} ({w.stock} {item.product_base_unit || 'pcs'})</option>
-                                ))}
+                                {item.available_warehouses?.map(w => {
+                                  const whName = warehouses.find(wh => wh.id === w.warehouse_id)?.name || w.warehouse_name;
+                                  return (
+                                    <option key={w.warehouse_id} value={w.warehouse_id}>{whName} ({w.stock} {item.product_base_unit || 'pcs'})</option>
+                                  );
+                                })}
                               </select>
                             </div>
                           )}

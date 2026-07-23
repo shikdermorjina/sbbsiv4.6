@@ -763,9 +763,12 @@ function CreateQuotationModal({ customers: initialCustomers, products, onClose, 
                                   onChange={e => updateItem(index, 'warehouse_id', e.target.value)}
                                   className="w-full border border-emerald-200 bg-emerald-50 text-emerald-700 rounded px-2 py-1 text-xs focus:outline-none"
                                 >
-                                  {item.available_warehouses.map(w => (
-                                    <option key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_name} ({w.stock} {item.product_base_unit || 'pcs'})</option>
-                                  ))}
+                                  {item.available_warehouses?.map(w => {
+                                    const whName = warehouses.find(wh => wh.id === w.warehouse_id)?.name || w.warehouse_name;
+                                    return (
+                                      <option key={w.warehouse_id} value={w.warehouse_id}>{whName} ({w.stock} {item.product_base_unit || 'pcs'})</option>
+                                    );
+                                  })}
                                 </select>
                               </div>
                             )}
