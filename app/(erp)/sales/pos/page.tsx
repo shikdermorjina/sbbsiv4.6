@@ -25,6 +25,7 @@ interface CartItem {
   unit_price: number;
   base_quantity: number;
   discount_percent: number;
+  available_warehouses?: { warehouse_id: string; warehouse_name: string; stock: number; inventory_item_id: string }[];
 }
 
 type PaymentTerm = 'full' | 'partial' | 'credit';
@@ -84,6 +85,7 @@ export default function POSPage() {
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { items: globalCartItems, clearCart: clearGlobalCart } = useGlobalCart();
   const globalCartConsumed = useRef(false);
+  const [warehouses, setWarehouses] = useState<{ id: string; name: string; code: string }[]>([]);
 
   // Consume global cart items on mount (from header scanner)
   useEffect(() => {
@@ -105,18 +107,27 @@ export default function POSPage() {
           const p = productsById.get(gci.id) as ProductData | undefined;
           if (!p) continue;
           const invItems = p.inventory_items || [];
-          const bestInv = invItems.length > 0 ? invItems.reduce((a, b) => a.quantity_on_hand > b.quantity_on_hand ? a : b) : null;
-          const stockAvailableInBase = bestInv ? bestInv.quantity_on_hand : 0;
+          const availableWhs = invItems
+            .filter((i: any) => Number(i.quantity_on_hand) > 0)
+            .map((i: any) => ({
+              warehouse_id: i.warehouse_id,
+              warehouse_name: warehouses.find(w => w.id === i.warehouse_id)?.name || i.warehouse_id,
+              stock: Number(i.quantity_on_hand),
+              inventory_item_id: i.id,
+            }));
+          const bestInv = availableWhs.length > 0 ? availableWhs.reduce((a, b) => a.stock > b.stock ? a : b) : null;
+          const stockAvailableInBase = bestInv ? bestInv.stock : 0;
           const unit = getDefaultSaleUnit(p as any);
           const unitPrice = gci.unit_price || unit.price || p.sale_price;
           newCartItems.push({
             id: p.id, name: p.name, sku: p.sku, sale_price: unitPrice,
             cost_price: unit.cost_price || p.cost_price || 0,
             quantity: gci.quantity, image_url: p.image_url,
-            inventory_item_id: bestInv?.id, warehouse_id: bestInv?.warehouse_id,
+            inventory_item_id: bestInv?.inventory_item_id, warehouse_id: bestInv?.warehouse_id,
             stock_available: stockAvailableInBase, selected_unit: unit,
             unit_price: unitPrice, base_quantity: convertToBaseUnit(gci.quantity, unit),
             discount_percent: 0,
+            available_warehouses: availableWhs,
           });
         }
         if (newCartItems.length > 0) {
@@ -137,6 +148,8 @@ export default function POSPage() {
       .then(({ data }) => setBrands(data || []));
     supabase.from('categories').select('id, name').eq('is_active', true).order('name')
       .then(({ data }) => setCategories(data || []));
+    supabase.from('warehouses').select('id, name, code').eq('is_active', true).order('is_default', { ascending: false }).order('name')
+      .then(({ data }) => { if (data) setWarehouses(data); });
     supabase.from('app_settings').select('setting_value').eq('setting_key', 'product_defaults').maybeSingle()
       .then(({ data }) => {
         if (data?.setting_value?.default_image_url) setDefaultProductImage(data.setting_value.default_image_url);
@@ -218,11 +231,21 @@ export default function POSPage() {
 
   function addToCart(product: ProductData, selectedUnit?: ProductUnit) {
     const invItems = product.inventory_items || [];
-    const bestInv = invItems.length > 0
-      ? invItems.reduce((a, b) => (a.quantity_on_hand > b.quantity_on_hand ? a : b))
+
+    // Build available warehouses from inventory_items
+    const availableWhs = invItems
+      .filter((i: any) => Number(i.quantity_on_hand) > 0)
+      .map((i: any) => ({
+        warehouse_id: i.warehouse_id,
+        warehouse_name: warehouses.find(w => w.id === i.warehouse_id)?.name || i.warehouse_id,
+        stock: Number(i.quantity_on_hand),
+        inventory_item_id: i.id,
+      }));
+    const bestInv = availableWhs.length > 0
+      ? availableWhs.reduce((a, b) => (a.stock > b.stock ? a : b))
       : null;
 
-    const stockAvailableInBase = bestInv ? bestInv.quantity_on_hand : 0;
+    const stockAvailableInBase = bestInv ? bestInv.stock : 0;
 
     if (stockAvailableInBase <= 0) {
       toast({ title: 'Out of stock', description: `${product.name} is not available`, variant: 'destructive' });
@@ -233,7 +256,7 @@ export default function POSPage() {
     const unitPrice = unit.price || product.sale_price;
 
     setCart(prev => {
-      const existingIndex = prev.findIndex(i => i.id === product.id && i.selected_unit?.id === unit.id);
+      const existingIndex = prev.findIndex(i => i.id === product.id && i.selected_unit?.id === unit.id && (i.warehouse_id ?? '') === (bestInv?.warehouse_id ?? ''));
 
       if (existingIndex >= 0) {
         const existing = prev[existingIndex];
@@ -257,13 +280,14 @@ export default function POSPage() {
         cost_price: unit.cost_price || product.cost_price || 0,
         quantity: 1,
         image_url: product.image_url,
-        inventory_item_id: bestInv?.id,
+        inventory_item_id: bestInv?.inventory_item_id,
         warehouse_id: bestInv?.warehouse_id,
         stock_available: stockAvailableInBase,
         selected_unit: unit,
         unit_price: unitPrice,
         base_quantity: convertToBaseUnit(1, unit),
         discount_percent: 0,
+        available_warehouses: availableWhs,
       }, ...prev];
     });
 
@@ -413,6 +437,7 @@ export default function POSPage() {
         unit_name: item.selected_unit?.unit_name,
         unit_conversion_factor: item.selected_unit?.conversion_factor,
         base_quantity: item.base_quantity,
+        warehouse_id: item.warehouse_id || null,
       }));
 
       const { error: itemsError } = await supabase.from('invoice_items').insert(invoiceItems);
@@ -1044,6 +1069,26 @@ export default function POSPage() {
                   />
                 </div>
               </div>
+              {item.available_warehouses && item.available_warehouses.length > 0 && (
+                <div className="flex items-center gap-1 mt-1 pl-5">
+                  <span className="text-[8px] font-medium text-muted-foreground shrink-0">WH</span>
+                  <select
+                    value={item.warehouse_id || ''}
+                    onChange={e => {
+                      const wh = item.available_warehouses?.find(w => w.warehouse_id === e.target.value);
+                      if (wh) {
+                        setCart(prev => prev.map((c, ci) => ci === index ? { ...c, warehouse_id: wh.warehouse_id, inventory_item_id: wh.inventory_item_id, stock_available: wh.stock } : c));
+                      }
+                    }}
+                    onClick={e => e.stopPropagation()}
+                    className="flex-1 text-[9px] border border-emerald-200 bg-emerald-50 text-emerald-700 rounded px-1 py-0.5 focus:outline-none cursor-pointer"
+                  >
+                    {item.available_warehouses.map(w => (
+                      <option key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_name} ({w.stock})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
               );
             })

@@ -119,7 +119,7 @@ export default function SalesPage() {
     const [invRes, custRes, prodRes, settingsRes, returnsRes, paymentMethodsRes, paymentsRes, deliveriesRes] = await Promise.all([
       invQuery.limit(500),
       supabase.from('customers').select('*').eq('is_active', true).order('name'),
-      supabase.from('products').select(`*, units:product_units(id, product_id, unit_name, unit_short, conversion_factor, is_base_unit, is_sale_unit, price, cost_price, is_active, sort_order), inventory_items(quantity_on_hand)`).eq('is_active', true).order('name'),
+      supabase.from('products').select(`*, units:product_units(id, product_id, unit_name, unit_short, conversion_factor, is_base_unit, is_sale_unit, price, cost_price, is_active, sort_order), inventory_items(id, warehouse_id, quantity_on_hand)`).eq('is_active', true).order('name'),
       supabase.from('app_settings').select('setting_value').eq('setting_key', 'company').maybeSingle(),
       supabase.from('sales_returns').select('id, invoice_id, return_number, total_refund_amount, items:sales_return_items(quantity_returned)'),
       supabase.from('payment_methods').select('code, name').eq('is_active', true).order('sort_order'),
@@ -881,6 +881,9 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
     selected_unit?: ProductUnit;
     available_units?: ProductUnit[];
     base_quantity: number;
+    warehouse_id?: string;
+    inventory_item_id?: string;
+    available_warehouses?: { warehouse_id: string; warehouse_name: string; stock: number; inventory_item_id: string }[];
   }[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -888,10 +891,13 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
   const [customerList, setCustomerList] = useState(customers);
   const [paymentMethods, setPaymentMethods] = useState<{ code: string; name: string }[]>([]);
   const [formTab, setFormTab] = useState<'items' | 'cost'>('items');
+  const [warehouses, setWarehouses] = useState<{ id: string; name: string; code: string }[]>([]);
 
   useEffect(() => {
     supabase.from('payment_methods').select('code, name').eq('is_active', true).order('sort_order')
       .then(({ data }) => { if (data) setPaymentMethods(data); });
+    supabase.from('warehouses').select('id, name, code').eq('is_active', true).order('is_default', { ascending: false }).order('name')
+      .then(({ data }) => { if (data) setWarehouses(data); });
   }, []);
 
   function addProductToItems(product: any) {
@@ -899,7 +905,21 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
     const defaultUnit: ProductUnit | undefined = multiUnit ? getDefaultSaleUnit(product) : undefined;
     const unitPrice = defaultUnit ? defaultUnit.price : (product.sale_price || 0);
     const baseQty = defaultUnit ? convertToBaseUnit(1, defaultUnit) : 1;
-    const stock = product.inventory_items?.reduce((s: number, i: any) => s + Number(i.quantity_on_hand), 0) ?? null;
+
+    // Build available warehouses from inventory_items
+    const invItems: any[] = product.inventory_items || [];
+    const availableWhs = invItems
+      .filter((i: any) => Number(i.quantity_on_hand) > 0)
+      .map((i: any) => ({
+        warehouse_id: i.warehouse_id,
+        warehouse_name: warehouses.find(w => w.id === i.warehouse_id)?.name || i.warehouse_id,
+        stock: Number(i.quantity_on_hand),
+        inventory_item_id: i.id,
+      }));
+    const bestWh = availableWhs.length > 0
+      ? availableWhs.reduce((a, b) => a.stock > b.stock ? a : b)
+      : null;
+    const stock = bestWh ? bestWh.stock : (invItems.length > 0 ? 0 : null);
 
     // Stock validation - prevent adding out of stock items
     if (stock !== null && stock <= 0) {
@@ -907,9 +927,9 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
       return;
     }
 
-    // If same product+unit already in list, increment qty instead
+    // If same product+unit+warehouse already in list, increment qty instead
     const existingIndex = items.findIndex(
-      i => i.product_id === product.id && (i.selected_unit?.id ?? '') === (defaultUnit?.id ?? '')
+      i => i.product_id === product.id && (i.selected_unit?.id ?? '') === (defaultUnit?.id ?? '') && (i.warehouse_id ?? '') === (bestWh?.warehouse_id ?? '')
     );
     if (existingIndex >= 0) {
       const updated = [...items];
@@ -940,12 +960,25 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
       selected_unit: defaultUnit,
       available_units: multiUnit ? product.units.filter((u: any) => u.is_active) : undefined,
       base_quantity: baseQty,
+      warehouse_id: bestWh?.warehouse_id,
+      inventory_item_id: bestWh?.inventory_item_id,
+      available_warehouses: availableWhs,
     }, ...prev]);
   }
 
   function updateItem(index: number, field: string, value: any) {
     const updated = [...items];
-    if (field === 'selected_unit') {
+    if (field === 'warehouse_id') {
+      const wh = updated[index].available_warehouses?.find(w => w.warehouse_id === value);
+      if (wh) {
+        const newBaseQty = updated[index].selected_unit ? convertToBaseUnit(updated[index].quantity, updated[index].selected_unit!) : updated[index].quantity;
+        if (newBaseQty > wh.stock) {
+          toast({ title: 'Stock limit', description: `Only ${wh.stock} ${updated[index].product_base_unit || 'units'} in ${wh.warehouse_name}`, variant: 'destructive' });
+          return;
+        }
+        updated[index] = { ...updated[index], warehouse_id: wh.warehouse_id, inventory_item_id: wh.inventory_item_id, stock_qty: wh.stock };
+      }
+    } else if (field === 'selected_unit') {
       const unit = value as ProductUnit;
       const newBaseQty = convertToBaseUnit(updated[index].quantity, unit);
       const stockQty = updated[index].stock_qty;
@@ -1055,6 +1088,7 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
       unit_name: item.selected_unit?.unit_name || item.product_unit || null,
       unit_conversion_factor: item.selected_unit?.conversion_factor,
       base_quantity: item.base_quantity,
+      warehouse_id: item.warehouse_id || null,
     }));
 
     const { error: itemsError } = await supabase.from('invoice_items').insert(invoiceItems);
@@ -1245,6 +1279,19 @@ function CreateInvoiceModal({ customers, products, onClose, onSaved }: {
                                 ))}
                               </select>
                               <p className="text-[10px] text-muted-foreground mt-0.5">1 {item.selected_unit.unit_name} = {item.selected_unit.conversion_factor} {item.product_base_unit || 'base'}</p>
+                            </div>
+                          )}
+                          {item.available_warehouses && item.available_warehouses.length > 0 && (
+                            <div className="mt-1">
+                              <select
+                                value={item.warehouse_id || ''}
+                                onChange={e => updateItem(index, 'warehouse_id', e.target.value)}
+                                className="w-full border border-emerald-200 bg-emerald-50 text-emerald-700 rounded px-2 py-1 text-xs focus:outline-none"
+                              >
+                                {item.available_warehouses.map(w => (
+                                  <option key={w.warehouse_id} value={w.warehouse_id}>{w.warehouse_name} ({w.stock} {item.product_base_unit || 'pcs'})</option>
+                                ))}
+                              </select>
                             </div>
                           )}
                         </td>
